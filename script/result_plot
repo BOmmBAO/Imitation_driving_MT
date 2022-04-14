@@ -1,0 +1,28 @@
+import os
+import csv
+
+import numpy as np
+from scipy.io import loadmat, savemat
+import matplotlib.pyplot as plt
+
+log_dir = "log"  # Directory specified in script, not including date+time
+min_num_trials = 5  # Plots up to this many trials
+
+returns = []
+for subdir in os.listdir(log_dir):
+    data = loadmat(os.path.join(log_dir, subdir, "logs.mat"))
+    len = data["returns"].shape[1]
+    if data["returns"].shape[1] >= min_num_trials:
+        returns.append(data["returns"][0][:min_num_trials])
+
+returns = np.array(returns)
+returns = np.maximum.accumulate(returns, axis=-1)
+mean = np.mean(returns, axis=0)
+
+# Plot result
+plt.figure()
+plt.plot(np.arange(1, min_num_trials + 1), mean)
+plt.title("Performance")
+plt.xlabel("Iteration number")
+plt.ylabel("Return")
+plt.show()
