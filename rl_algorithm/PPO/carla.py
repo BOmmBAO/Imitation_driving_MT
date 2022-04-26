@@ -1,167 +1,220 @@
+from __future__ import division
+from __future__ import print_function
+from __future__ import absolute_import
+
 import gym
-from gym import spaces
+from rl_algorithm.PETS_action.dmbrl.env.carla import CarlaEnv
 import math
-import carla
-import argparse
-
-try:
-    import numpy as np
-    import sys
-    from os import path as osp
-except ImportError:
-    raise RuntimeError('import error!')
-from carla_env.sim_carla_copy import SimInit
-from carla_env.sim_vehicle import VehicleInit
+import numpy as np
+import tensorflow as tf
 from utils.common import *
-from carla_env.fplot import FeaPlot
+from dotmap import DotMap
 
 
-class CarlaEnv(gym.Env):
-
-    def __init__(self, VERSION = '0.9.11'):
-
-        args = self.default_args()
-        self.sim = SimInit(args)
-        self.car = VehicleInit(self.sim)
-        self.sigma = {"sigma_pos": 0.3, "sigma_vel_upper": 0.6,
-                       "sigma_vel_lower": 1.0, "sigma_yaw": 0.4}
-
-        obs_shape = len(self.car.fea_ext.observation)
-        obs_high = np.array([np.inf] * obs_shape)
-        self.observation_space = spaces.Box(-obs_high, obs_high)
-        self.obs_index = self.car.fea_ext.obs_index
-
-        self.action_space = spaces.Discrete(5)  # discrete decision
-        self.fea_plot = FeaPlot(self.car.fea_ext)
-
-    def default_args(self):
-        description = ("CARLA Scenario Runner: Setup, Run and Evaluate scenarios using CARLA\n"
-                       "Current version: 0.9.11")
-        parser = argparse.ArgumentParser(description=description)
-        parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + "0.9.11")
-        parser.add_argument('--host', metavar='H', default='127.0.0.1', help='IP of the host server')
-        parser.add_argument('-p', '--port', default=2000, type=int, help='TCP port to listen to')
-        ##scenario##
-        parser.add_argument('--timeout', default="10.0",
-                            help='Set the CARLA client timeout value in seconds')
-        parser.add_argument('--trafficManagerPort', default='8000',
-                            help='Port to use for the TrafficManager (default: 8000)')
-        parser.add_argument('--trafficManagerSeed', default='0',
-                            help='Seed used by the TrafficManager (default: 0)')
-        parser.add_argument('--sync', action='store_true',
-                            help='Forces the simulation to run synchronously')
-        parser.add_argument('--list', action="store_true", help='List all supported scenarios and exit')
-
-        parser.add_argument(
-            '--scenario',
-            help='Name of the scenario to be executed. Use the preposition \'group:\' to run all scenarios of one class, e.g. ControlLoss or FollowLeadingVehicle')
-        parser.add_argument('--openscenario', help='Provide an OpenSCENARIO definition')
-        parser.add_argument(
-            '--route', help='Run a route as a scenario (input: (route_file,scenario_file,[route id]))', nargs='+',
-            type=str)
-        #Agent used to execute the scenario. Currently only compatible with route-based scenarios
-        # parser.add_argument(
-        #     '--agent', help="Agent used to execute the scenario. Currently only compatible with route-based scenarios")
-        # parser.add_argument('--agentConfig', type=str, help="Path to Agent's configuration file", default="")
-
-        # parser.add_argument('--output', action="store_true", help='Provide results on stdout')
-        # parser.add_argument('--file', action="store_true", help='Write results into a txt file')
-        # parser.add_argument('--junit', action="store_true", help='Write results into a junit file')
-        # parser.add_argument('--json', action="store_true", help='Write results into a JSON file')
-        # parser.add_argument('--outputDir', default='', help='Directory for output files (default: this directory)')
-        #
-        # parser.add_argument('--configFile', default='',
-        #                     help='Provide an additional scenario configuration file (*.xml)')
-        # parser.add_argument('--additionalScenario', default='',
-        #                     help='Provide additional scenario implementations (*.py)')
-        #
-        # parser.add_argument('--debug', action="store_true", help='Run with debug output')
-        # parser.add_argument('--reloadWorld', action="store_true",
-        #                     help='Reload the CARLA world before starting a scenario (default=True)')
-        # parser.add_argument('--record', type=str, default='',
-        #                     help='Path were the files will be saved, relative to SCENARIO_RUNNER_ROOT.\nActivates the CARLA recording feature and saves to file all the criteria information.')
-        # parser.add_argument('--randomize', action="store_true", help='Scenario parameters are randomized')
-        # parser.add_argument('--repetitions', default=1, type=int, help='Number of scenario executions')
-        # parser.add_argument('--waitForEgo', action="store_true", help='Connect the scenario to an existing ego vehicle')
-
-        args = parser.parse_args()
-        return args
-
-    def step(self, decision):
-        self.car.step_decision(decision)
-        self.sim.update()
-        ob = self._get_obs()
-        reward = self._get_reward(self.sigma)
-        done = True if self.sim.term_check() else False
-        print("Decision:", decision)
-        print("Reward:", reward)
-        print("DONE?", done)
-        return ob, reward, done, {}
-
-    def reset(self):
-        print("Env Reset!")
-        self.sim.reset()
-        self.car.reset(self.sim)
-        self.sim.update()
-        ob = self._get_obs()
-        return ob
-
-    def test_step(self):
-        self.sim.update()
-        self.car.rule_based_step()
-        ob = self._get_obs()
-        reward = self._get_reward(self.sigma)
-        done = False if self.sim.term_check() else True
-        return ob, reward, done, {}
-
-    def _get_obs(self):
-        return self.car.fea_ext.observation
-
-    def _plot_zombie_boxx(self, obs):
-        self.fea_plot.plot_lane_andZombie_inEgoCar(obs)
-
-    def _get_reward(self, sigmas):
-        car_x, car_y, car_v, car_yaw = self.car.fea_ext.vehicle_info.x, self.car.fea_ext.vehicle_info.y, \
-                                self.car.fea_ext.vehicle_info.v, self.car.fea_ext.vehicle_info.yaw
-        if self.car.reference is None:
-            return 0
-        [rx, ry, ryaw, vel_des] = self.car.reference
-        lane_width = self.car.fea_ext.cur_lane_width
-
-        nearest_point, nearest_dist = None, 10
-        for [x, y, yaw] in zip(rx, ry, ryaw):
-            _dist = np.hypot(car_x-x, car_y-y)
-            if _dist < nearest_dist:
-                nearest_point = [x, y, yaw]
-                nearest_dist = _dist
-
-        # sigma_pos = 0.3
-        # sigma_pos = sigmas["sigma_pos"]
-        # phi = math.atan2(car_y - nearest_point[1], car_x - nearest_point[0])
-        # delta = pi_2_pi(ryaw[0] - phi)
-        # ct_err = math.sin(delta) * nearest_dist  # Cross Track Error
-        # track_err = abs(ct_err) / lane_width
-        # track_rewd = np.exp(-track_err**2 / (2 * sigma_pos**2))
-
-        # velocity reward
-        sigma_vel_upper, sigma_vel_lower = sigmas["sigma_vel_upper"], sigmas["sigma_vel_lower"]
-        sigma_vel = sigma_vel_upper if car_v <= vel_des else sigma_vel_lower
-        v_err = car_v - vel_des
-        v_rewd = np.exp(-v_err**2 / (2*sigma_vel**2))
-
-        # angle reward
-        # sigma_yaw = sigmas["sigma_yaw"]
-        # yaw_err = abs(pi_2_pi(nearest_point[2]-car_yaw))
-        # ang_rewd = np.exp(-yaw_err**2 / (2 * sigma_yaw ** 2))
-
-        accident_cost = -10 if self.sim.collision_event else 0
-        reward = v_rewd + accident_cost
-
-        return reward
+from rl_algorithm.PETS_action.dmbrl.misc.DotmapUtils import get_required_argument
+from rl_algorithm.PETS_action.dmbrl.modeling.layers import FC
+from utils.common import cal_angle
 
 
+class CarlaConfigModule:
+    ENV_NAME = "MBRL-Carla-v0"
+    TASK_HORIZON = 100
+    NTRAIN_ITERS = 10
+    NROLLOUTS_PER_ITER = 1
+    PLAN_HOR = 10
+    MODEL_IN, MODEL_OUT = 140, 28
+    GP_NINDUCING_POINTS = 50
+
+    def __init__(self):
+        self.ENV = gym.make(self.ENV_NAME)
+        cfg = tf.ConfigProto()
+        cfg.gpu_options.allow_growth = True
+        self.SESS = tf.Session(config=cfg)
+        self.NN_TRAIN_CFG = {"epochs": 5}
+        self.OPT_CFG = {
+            "Random": {
+                "popsize": 100
+            },
+            "CEM": {
+                "popsize": 20,
+                "num_elites": 5,
+                "max_iters": 20,
+                "alpha": 0.1
+            }
+        }
+
+    @staticmethod
+    def obs_postproc(obs, pred):
+        if isinstance(obs, np.ndarray):
+            return np.concatenate([pred[:, 0:28], obs[:, 28:]], axis=1)
+        else:
+            return tf.concat([pred[:, 0:28], obs[:, 28:]], axis=1)
+
+    @staticmethod
+    def targ_proc(obs, next_obs):
+        return next_obs[:, 0:28]
+
+    @staticmethod
+    def obs_cost_fn(obs, obs_index, sigmas):
+        _index = obs_index['lane_width']
+        lane_width = obs[0, _index[0]:_index[1]]
+        _index = obs_index['ego_car_des_vel']
+        vel_des = obs[0, _index[0]:_index[1]]
+
+        rewards = None
+        for n in range(obs.shape.as_list()[0]):
+
+            car_v = CarlaConfigModule._get_vehicle_info(obs, obs_index, n)
+            wp_x, wp_y, wp_yaw = CarlaConfigModule._get_waypoints(obs, obs_index, n)
+
+            _dist = tf.sqrt(tf.add(tf.square(wp_x), tf.square(wp_y))) # hypot
+            min_dist = tf.reduce_min(_dist)
+            min_index = tf.arg_min(_dist, dimension=0)
+
+            # track reward
+            sigma_pos = sigmas["sigma_pos"]
+            denom_t = tf.constant(2 * sigma_pos ** 2)
+            phi = tf.atan2(wp_y[min_index], wp_x[min_index])
+            delta = tf.subtract(wp_yaw[min_index], phi)
+            ct_err = tf.divide(tf.multiply(tf.sin(delta), min_dist), lane_width)
+            track_rewd = tf.exp(tf.multiply(-tf.pow(min_dist, 2), denom_t))
+
+            # velocity reward
+            sigma_vel = (sigmas["sigma_vel_upper"] + sigmas["sigma_vel_lower"])/2
+            denom_v = tf.constant(2 * sigma_vel ** 2)
+            v_err = tf.subtract(car_v, vel_des)
+            rew_base =  0
+            if tf.less(0.001, car_v) is False:
+                rew_base = 0.1
+            v_rewd = tf.add(tf.exp(tf.multiply(-tf.pow(v_err, 2), denom_v)), rew_base)
+
+            # angle reward
+            sigma_yaw = sigmas["sigma_yaw"]
+            denom_yaw = tf.constant(2 * sigma_yaw ** 2)
+            ang_rewd = tf.exp(tf.multiply(-tf.pow(wp_yaw[min_index], 2), denom_yaw))
+
+            # accident_cost = -10 if CarlaConfigModule._check_collision(obs, obs_index, n) is True  or \
+            #                        CarlaConfigModule._check_laneinvasion(obs, obs_index, n) is True else 0
+            accident_cost = 0
+            # rewd_sum = tf.add(tf.multiply(tf.multiply(track_rewd, v_rewd), ang_rewd), accident_cost)
+            rewd_sum = tf.add(v_rewd, accident_cost)
+            rewards = rewd_sum if rewards is None else tf.concat([rewards, rewd_sum], axis=0)
+
+        return rewards
 
 
+    @staticmethod
+    def ac_cost_fn(acs):
+        if isinstance(acs, np.ndarray):
+            return 0.01 * np.sum(np.square(acs), axis=1)
+        else:
+            return 0.01 * tf.reduce_sum(tf.square(acs), axis=1)
+
+    def nn_constructor(self, model_init_cfg):
+        model = get_required_argument(model_init_cfg, "model_class", "Must provide model class")(DotMap(
+            name="model", num_networks=get_required_argument(model_init_cfg, "num_nets", "Must provide ensemble size"),
+            sess=self.SESS, load_model=model_init_cfg.get("load_model", False),
+            model_dir=model_init_cfg.get("model_dir", None)
+        ))
+        if not model_init_cfg.get("load_model", False):
+            model.add(FC(500, input_dim=self.MODEL_IN, activation='swish', weight_decay=0.0001))
+            model.add(FC(500, activation='swish', weight_decay=0.00025))
+            model.add(FC(500, activation='swish', weight_decay=0.00025))
+            model.add(FC(500, activation='swish', weight_decay=0.00025))
+            model.add(FC(200, activation='swish', weight_decay=0.00025))
+            model.add(FC(self.MODEL_OUT, weight_decay=0.0005))
+        model.finalize(tf.train.AdamOptimizer, {"learning_rate": 0.001})
+        return model
+
+    def gp_constructor(self, model_init_cfg):
+        model = get_required_argument(model_init_cfg, "model_class", "Must provide model class")(DotMap(
+            name="model",
+            kernel_class=get_required_argument(model_init_cfg, "kernel_class", "Must provide kernel class"),
+            kernel_args=model_init_cfg.get("kernel_args", {}),
+            num_inducing_points=get_required_argument(
+                model_init_cfg, "num_inducing_points", "Must provide number of inducing points."
+            ),
+            sess=self.SESS
+        ))
+        return model
+
+    @staticmethod
+    def _get_vehicle_info(obs, obs_index, index):
+        _index = obs_index['ego_car_vel']
+        v = obs[index, _index[0]:_index[1]]
+        _v = tf.sqrt(tf.add(tf.square(v[0]), tf.square(v[1])))
+
+        return _v
+
+    @staticmethod
+    def _get_waypoints(obs, obs_index, index):
+
+        _index = obs_index['inner_line_right']
+        line_r = obs[index][_index[0]:_index[1]]
+        _index = obs_index['inner_line_left']
+        line_l = obs[index][_index[0]:_index[1]]
+
+        num = int(line_r.shape.as_list()[0]/2)
+
+        line_r_x = tf.gather(line_r, tf.range(0, num*2, 2), axis=0)
+        line_r_y = tf.gather(line_r, tf.range(1, num*2, 2), axis=0)
+        line_l_x = tf.gather(line_l, tf.range(0, num*2, 2), axis=0)
+        line_l_y = tf.gather(line_l, tf.range(1, num*2, 2), axis=0)
+        wp_x = tf.divide(tf.add(line_r_x, line_l_x), 2)
+        wp_y = tf.divide(tf.add(line_r_y, line_l_y), 2)
+
+        wp_yaw = tf.atan2(tf.subtract(wp_y[1:num], wp_y[0:num-1]), tf.subtract(wp_x[1:num], wp_x[0:num-1]))
+        return wp_x[0:num-1], wp_y[0:num-1], wp_yaw
+
+    @staticmethod
+    def _check_collision(obs, obs_index, index):
+
+        _index = obs_index['zombie_cars_bbox']
+        _bbox = obs[index][_index[0]:_index[1]]
+        num = int(_bbox.shape.as_list()[0]/2)
+        bbox_x = tf.gather(_bbox, tf.range(0, num * 2, 2), axis=0)
+        bbox_y = tf.gather(_bbox, tf.range(1, num * 2, 2), axis=0)
+        _dist = tf.sqrt(tf.add(tf.square(bbox_x), tf.square(bbox_y)))  # hypot
+        min_dist = tf.reduce_min(_dist)
+
+        return tf.less(min_dist, 3)
 
 
+    @staticmethod
+    def _check_laneinvasion(obs, obs_index, index):
+        _index = obs_index['outer_line_right']
+        outer_line_r = obs[index][_index[0]:_index[1]]
+        _index = obs_index['outer_line_left']
+        outer_line_l = obs[index][_index[0]:_index[1]]
 
+        num = int(outer_line_r.shape.as_list()[0]/2)
+        right_x = tf.gather(outer_line_r, tf.range(0, num * 2, 2), axis=0)
+        right_y = tf.gather(outer_line_r, tf.range(1, num * 2, 2), axis=0)
+        left_x = tf.gather(outer_line_l, tf.range(0, num * 2, 2), axis=0)
+        left_y = tf.gather(outer_line_l, tf.range(1, num * 2, 2), axis=0)
+
+        _dist = tf.sqrt(tf.add(tf.square(right_x), tf.square(right_y)))
+        right_min_dist = tf.reduce_min(_dist)
+        right_min_index = tf.arg_min(_dist, dimension=0)
+
+        _dist = tf.sqrt(tf.add(tf.square(left_x), tf.square(left_y)))
+        left_min_dist = tf.reduce_min(_dist)
+        left_min_index = tf.arg_min(_dist, dimension=0)
+
+        def cal_angle(vec_1, vec_2):
+
+            norm_1 = tf.sqrt(tf.add(tf.square(vec_1[0]), tf.square(vec_1[1])))
+            norm_2 = tf.sqrt(tf.add(tf.square(vec_2[0]), tf.square(vec_2[1])))
+            denorm = tf.multiply(norm_1, norm_2)
+            nume = tf.add(tf.multiply(vec_1[0], vec_2[0]), tf.multiply(vec_1[1], vec_2[1]))
+            cos_theta = tf.divide(nume, denorm)
+            return tf.acos(cos_theta)
+
+        vec_1 = tf.stack([left_x[left_min_index], left_y[left_min_index]], axis = 0)
+        vec_2 = tf.stack([right_x[right_min_index], right_y[right_min_index]], axis=0)
+        theta = cal_angle(vec_1, vec_2)
+
+        return tf.greater(theta, math.pi/2)
+
+
+CONFIG_MODULE = CarlaConfigModule
