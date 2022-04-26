@@ -18,15 +18,22 @@ class SimInit:
     def __init__(self, args, scenario = True, scenario_name = 'OverTake', A_skip =1):
         self.client = carla.Client(args.host, args.port)
         self.client.set_timeout(10.0)
+        self.synchronous_master = False
         self.dt = 0.1
 
         self.world = self.client.load_world('Town03')
         self._map = self.world.get_map()
         self.world.freeze_all_traffic_lights(True)
 
+        #没啥需求保持一个使用的client+固定时步0.05比较好... 不然掉帧自己都发现不了，但是用于做场景测试的client actor就异步+固定时步0.05 不然测试车辆没法同步
         self.original_settings = self.world.get_settings()
         settings = self.world.get_settings()
-        settings.fixed_delta_seconds = self.dt
+        # settings.fixed_delta_seconds = None # Set a variable time-step, the time for compute the simulation
+        # if you have started, you can : cd PythonAPI/util && python3 config.py --delta-seconds 0
+        #fixed_delta_seconds <= max_substep_delta_time * max_substeps , but suggestion: the substep delta time should at least be below 0.01666 and ideally below 0.01.
+        settings.max_substep_delta_time = 0.01
+        settings.max_substeps = 10
+        settings.fixed_delta_seconds = self.dt  # Set a fix time-step
         settings.synchronous_mode = True
         self.world.apply_settings(settings)
 

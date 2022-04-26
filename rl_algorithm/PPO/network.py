@@ -1,3 +1,0 @@
-"""
-Actor-Critic NN
-"""

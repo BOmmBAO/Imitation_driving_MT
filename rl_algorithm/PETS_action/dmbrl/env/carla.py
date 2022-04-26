@@ -23,6 +23,7 @@ class CarlaEnv(gym.Env):
         argparser = argparse.ArgumentParser(description='Carla ArgParser practice')
         argparser.add_argument('--host', metavar='H', default='127.0.0.1', help='IP of the host server')
         argparser.add_argument('-p', '--port', default=2000, type=int, help='TCP port to listen to')
+        #argparser.add_argument('--sync', action='store_true', help='Synchronous mode execution')
         args = argparser.parse_args()
 
         self.sim = SimInit(args)

@@ -1,1 +1,0 @@
-# To collect human demonstration
