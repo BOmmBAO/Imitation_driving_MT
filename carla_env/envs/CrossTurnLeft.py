@@ -1,9 +1,8 @@
-import carla
 from carla_env.envs.scenario_utils import *
 import numpy as np
 from agents.navigation.basic_agent import *
 import random
-import logger
+from rl_algorithm import logger
 
 
 class Cross_Turn_Left(object):

@@ -13,7 +13,7 @@ except ImportError:
 from carla_env.sim_carla_copy import SimInit
 from carla_env.sim_vehicle import VehicleInit
 from utils.common import *
-from carla_env.fplot import Plot_features
+from carla_env.fplot import FeaPlot
 from carla_env.feature import STATUS
 
 
@@ -38,7 +38,7 @@ class CarlaEnv(gym.Env):
         self.action_space = gym.spaces.Box(-act_high, act_high)
         self.obs_index = self.car.fea_ext.obs_index
 
-        self.fea_plot = Plot_features(self.car.fea_ext)
+        self.fea_plot = FeaPlot(self.car.fea_ext)
 
     def step(self, action):
         self.car.step_action(action)
