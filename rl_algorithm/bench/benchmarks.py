@@ -1,4 +1,5 @@
 import re
+import os.path as osp
 import os
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -19,7 +20,7 @@ def register_benchmark(benchmark):
     if 'tasks' in benchmark:
         for t in benchmark['tasks']:
             if 'desc' not in t:
-                t['desc'] = remove_version_re.sub('', t.get('env_id', t.get('id')))
+                t['desc'] = remove_version_re.sub('', t['env_id'])
     _BENCHMARKS.append(benchmark)
 
 
@@ -155,10 +156,9 @@ register_benchmark({
 
 # HER DDPG
 
-_fetch_tasks = ['FetchReach-v1', 'FetchPush-v1', 'FetchSlide-v1']
 register_benchmark({
-    'name': 'Fetch1M',
-    'description': 'Fetch* benchmarks for 1M timesteps',
-    'tasks': [{'trials': 6, 'env_id': env_id, 'num_timesteps': int(1e6)} for env_id in _fetch_tasks]
+    'name': 'HerDdpg',
+    'description': 'Smoke-test only benchmark of HER',
+    'tasks': [{'trials': 1, 'env_id': 'FetchReach-v1'}]
 })
 

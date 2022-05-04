@@ -1,5 +1,6 @@
 import numpy as np
-from .vec_env import VecEnv
+from gym import spaces
+from . import VecEnv
 from .util import copy_obs_dict, dict_to_obs, obs_space_info
 
 class DummyVecEnv(VecEnv):
@@ -26,7 +27,6 @@ class DummyVecEnv(VecEnv):
         self.buf_rews  = np.zeros((self.num_envs,), dtype=np.float32)
         self.buf_infos = [{} for _ in range(self.num_envs)]
         self.actions = None
-        self.spec = self.envs[0].spec
 
     def step_async(self, actions):
         listify = True
@@ -45,8 +45,8 @@ class DummyVecEnv(VecEnv):
     def step_wait(self):
         for e in range(self.num_envs):
             action = self.actions[e]
-            # if isinstance(self.envs[e].action_space, spaces.Discrete):
-            #    action = int(action)
+            if isinstance(self.envs[e].action_space, spaces.Discrete):
+                action = int(action)
 
             obs, self.buf_rews[e], self.buf_dones[e], self.buf_infos[e] = self.envs[e].step(action)
             if self.buf_dones[e]:
@@ -54,13 +54,13 @@ class DummyVecEnv(VecEnv):
             self._save_obs(e, obs)
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones),
                 self.buf_infos.copy())
-
+    
     def reset(self):
         for e in range(self.num_envs):
             obs = self.envs[e].reset()
             self._save_obs(e, obs)
         return self._obs_from_buf()
-
+    
     def _save_obs(self, e, obs):
         for k in self.keys:
             if k is None:
@@ -79,3 +79,36 @@ class DummyVecEnv(VecEnv):
             return self.envs[0].render(mode=mode)
         else:
             return super().render(mode=mode)
+
+class DummyCarlaEnv(VecEnv):
+    def __init__(self, envs):
+        self.envs = envs
+        self.ENV_NUM = len(envs)
+        env = self.envs[0]        
+        VecEnv.__init__(self, len(envs), env.observation_space, env.action_space)
+        self.ts = np.zeros(len(self.envs), dtype='int')        
+        self.actions = None
+        # @TODO: env pool
+        self.env_now = 0
+
+    def step_async(self, actions):
+        self.actions = actions
+
+    def step_wait(self):
+       ac=np.reshape(self.actions,(len(self.envs),-1))
+       results = [env.step(a) for (a,env) in zip(ac, self.envs)]
+       obs, rews, dones, infos = map(np.array, zip(*results))
+       self.ts += 1
+       for (i, done) in enumerate(dones):
+           if done: 
+               obs[i] = self.envs[i].reset()
+               self.ts[i] = 0
+       self.actions = None
+       return np.array(obs), np.array(rews), np.array(dones), infos
+
+    def reset(self):        
+        results = [env.reset() for env in self.envs]
+        return np.array(results)
+    
+    def close(self):
+        return

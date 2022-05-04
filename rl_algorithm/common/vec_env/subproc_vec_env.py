@@ -1,80 +1,104 @@
-import multiprocessing as mp
-
 import numpy as np
-from .vec_env import VecEnv, CloudpickleWrapper, clear_mpi_env_vars
+from multiprocessing import Process, Pipe
+from . import VecEnv, CloudpickleWrapper
+import multiprocessing
 
-
-def worker(remote, parent_remote, env_fn_wrappers):
-    def step_env(env, action):
-        ob, reward, done, info = env.step(action)
-        if done:
-            ob = env.reset()
-        return ob, reward, done, info
-
+def worker(remote, parent_remote, env_fn_wrapper, host, port, args):
     parent_remote.close()
-    envs = [env_fn_wrapper() for env_fn_wrapper in env_fn_wrappers.x]
-    try:
-        while True:
-            cmd, data = remote.recv()
-            if cmd == 'step':
-                remote.send([step_env(env, action) for env, action in zip(envs, data)])
-            elif cmd == 'reset':
-                remote.send([env.reset() for env in envs])
-            elif cmd == 'render':
-                remote.send([env.render(mode='rgb_array') for env in envs])
-            elif cmd == 'close':
-                remote.close()
-                break
-            elif cmd == 'get_spaces_spec':
-                remote.send(CloudpickleWrapper((envs[0].observation_space, envs[0].action_space, envs[0].spec)))
-            else:
-                raise NotImplementedError
-    except KeyboardInterrupt:
-        print('SubprocVecEnv worker: got KeyboardInterrupt')
-    finally:
-        for env in envs:
-            env.close()
+    env = env_fn_wrapper.x(host, port, args)
+    env.wait_for_reset = False
+    # try:
+    while True:
+        cmd, data = remote.recv()
+        if cmd == 'step':
+            ob, reward, done, info = env.step(data)
+            if done:
+                ob = env.reset()
+            remote.send((ob, reward, done, info))
+        elif cmd == 'reset':
+            ob = env.reset()
+            remote.send(ob)
+        elif cmd == 'render':
+            remote.send(env.render(mode='rgb_array'))
+        elif cmd == 'close':
+            remote.close()
+            break
+        elif cmd == 'get_spaces':
+            remote.send((env.observation_space, env.action_space))
+        else:
+            raise NotImplementedError
+    # except KeyboardInterrupt:
+    #     print('SubprocVecEnv worker: got KeyboardInterrupt')
+    # finally:
+    #     env.close()
 
+def worker_pool(remote, parent_remote, env_fn_wrapper, host, port, args):
+    parent_remote.close()
+    env = env_fn_wrapper.x(host, port, args)
+    env.wait_for_reset = False
+    # try:
+    while True:
+        cmd, data = remote.recv()
+        if cmd == 'step':
+            ob, reward, done, info = env.step(data)
+            # if done:
+            #     ob = env.reset()
+            remote.send((ob, reward, done, info))
+        elif cmd == 'reset':
+            ob = env.reset()
+            remote.send(ob)
+        elif cmd == 'render':
+            remote.send(env.render(mode='rgb_array'))
+        elif cmd == 'close':
+            remote.close()
+            break
+        elif cmd == 'get_spaces':
+            remote.send((env.observation_space, env.action_space))
+        elif cmd == 'reset_ob':
+            env.wait_for_reset = True
+        elif cmd == 'reset_control':
+            ob = env.reset()
+            env.reset_ob = ob
+            env.wait_for_reset = False
+        elif cmd == 'wait_for_reset':
+            remote.send((env.wait_for_reset))
+        elif cmd == 'get_reset_ob':
+            remote.send((env.reset_ob))
+        else:
+            raise NotImplementedError
 
 class SubprocVecEnv(VecEnv):
     """
     VecEnv that runs multiple environments in parallel in subproceses and communicates with them via pipes.
     Recommended to use when num_envs > 1 and step() can be a bottleneck.
     """
-    def __init__(self, env_fns, spaces=None, context='spawn', in_series=1):
+    def __init__(self, env_fns, spaces=None, hosts=None, ports=None, argss=None):
         """
         Arguments:
 
         env_fns: iterable of callables -  functions that create environments to run in subprocesses. Need to be cloud-pickleable
-        in_series: number of environments to run in series in a single process
-        (e.g. when len(env_fns) == 12 and in_series == 3, it will run 4 processes, each running 3 envs in series)
         """
         self.waiting = False
         self.closed = False
-        self.in_series = in_series
         nenvs = len(env_fns)
-        assert nenvs % in_series == 0, "Number of envs must be divisible by number of envs to run in series"
-        self.nremotes = nenvs // in_series
-        env_fns = np.array_split(env_fns, self.nremotes)
-        ctx = mp.get_context(context)
-        self.remotes, self.work_remotes = zip(*[ctx.Pipe() for _ in range(self.nremotes)])
-        self.ps = [ctx.Process(target=worker, args=(work_remote, remote, CloudpickleWrapper(env_fn)))
-                   for (work_remote, remote, env_fn) in zip(self.work_remotes, self.remotes, env_fns)]
+        self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(nenvs)])
+        self.ps = [Process(target=worker, args=(work_remote, remote, CloudpickleWrapper(env_fn), host, port, args))
+                   for (work_remote, remote, env_fn, host, port, args) in zip(self.work_remotes, self.remotes, env_fns, hosts, ports, argss)]
+        
+
         for p in self.ps:
             p.daemon = True  # if the main process crashes, we should not cause things to hang
-            with clear_mpi_env_vars():
-                p.start()
+            p.start()
         for remote in self.work_remotes:
             remote.close()
 
-        self.remotes[0].send(('get_spaces_spec', None))
-        observation_space, action_space, self.spec = self.remotes[0].recv().x
+        self.remotes[0].send(('get_spaces', None))
+        observation_space, action_space = self.remotes[0].recv()
         self.viewer = None
-        VecEnv.__init__(self, nenvs, observation_space, action_space)
+        VecEnv.__init__(self, len(env_fns), observation_space, action_space)
 
     def step_async(self, actions):
         self._assert_not_closed()
-        actions = np.array_split(actions, self.nremotes)
         for remote, action in zip(self.remotes, actions):
             remote.send(('step', action))
         self.waiting = True
@@ -82,18 +106,15 @@ class SubprocVecEnv(VecEnv):
     def step_wait(self):
         self._assert_not_closed()
         results = [remote.recv() for remote in self.remotes]
-        results = _flatten_list(results)
         self.waiting = False
         obs, rews, dones, infos = zip(*results)
-        return _flatten_obs(obs), np.stack(rews), np.stack(dones), infos
+        return np.stack(obs), np.stack(rews), np.stack(dones), infos
 
     def reset(self):
         self._assert_not_closed()
         for remote in self.remotes:
             remote.send(('reset', None))
-        obs = [remote.recv() for remote in self.remotes]
-        obs = _flatten_list(obs)
-        return _flatten_obs(obs)
+        return np.stack([remote.recv() for remote in self.remotes])
 
     def close_extras(self):
         self.closed = True
@@ -110,29 +131,81 @@ class SubprocVecEnv(VecEnv):
         for pipe in self.remotes:
             pipe.send(('render', None))
         imgs = [pipe.recv() for pipe in self.remotes]
-        imgs = _flatten_list(imgs)
         return imgs
 
     def _assert_not_closed(self):
         assert not self.closed, "Trying to operate on a SubprocVecEnv after calling close()"
 
-    def __del__(self):
-        if not self.closed:
-            self.close()
+class SubprocVecEnvPool(VecEnv):
+    
+    def __init__(self, env_fns, spaces=None, hosts=None, ports=None, argss=None):
+        self.waiting = False
+        self.closed = False
+        nenvs = len(env_fns)
+        self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(nenvs)])
+        self.ps = [Process(target=worker_pool, args=(work_remote, remote, CloudpickleWrapper(env_fn), host, port, args))
+                   for (work_remote, remote, env_fn, host, port, args) in zip(self.work_remotes, self.remotes, env_fns, hosts, ports, argss)]
+        
+        for p in self.ps:
+            p.daemon = True  # if the main process crashes, we should not cause things to hang
+            p.start()
+        for remote in self.work_remotes:
+            remote.close()
 
-def _flatten_obs(obs):
-    assert isinstance(obs, (list, tuple))
-    assert len(obs) > 0
+        self.remotes[0].send(('get_spaces', None))
+        observation_space, action_space = self.remotes[0].recv()
+        self.viewer = None
+        VecEnv.__init__(self, len(env_fns), observation_space, action_space)
+        self.ts = np.zeros(len(env_fns), dtype='int')
+        self.actions = None
+        self.env_now = 0
+        self.reset_obs = [None, None, None]
 
-    if isinstance(obs[0], dict):
-        keys = obs[0].keys()
-        return {k: np.stack([o[k] for o in obs]) for k in keys}
-    else:
-        return np.stack(obs)
+    def step_async(self, actions):
+        self.actions = actions
+        self._assert_not_closed()
+        e = self.env_now
+        action = actions[e]
+        remote = self.remotes[e]
+        remote.send(('step', action))
+        self.waiting = True
 
-def _flatten_list(l):
-    assert isinstance(l, (list, tuple))
-    assert len(l) > 0
-    assert all([len(l_) > 0 for l_ in l])
+    # async update step 
+    def step_wait(self):
+        # @TODO: env pool, revise the runner structure or change the step counts
+        e = self.env_now
+        remote = self.remotes[e]
+        result = remote.recv()
+        ob, rew, done, info = result
+        self.ts[e] += 1
+        if done:
+            remote = self.remotes[e]
+            remote.send(('reset_ob', done))
+            remote.send(('reset_control', done))
+            self.ts[e] = 0
+        self.actions = None
+        return np.array([ob]), np.array([rew]), np.array([done]), [info]
 
-    return [l__ for l_ in l for l__ in l_]
+    def reset(self):
+        self._assert_not_closed()
+        for remote in self.remotes:
+            remote.send(('reset', None))
+        return np.array([remote.recv() for remote in self.remotes])
+
+    def is_reset(self, e):
+        remote = self.remotes[e]
+        remote.send(('wait_for_reset', None))
+        wait_for_reset = remote.recv()
+        return wait_for_reset
+
+    def get_reset_ob(self, e):
+        remote = self.remotes[e]
+        remote.send(('get_reset_ob', None))
+        ob = remote.recv()
+        return ob
+
+    def close(self):
+        return
+
+    def _assert_not_closed(self):
+        assert not self.closed, "Trying to operate on a SubprocVecEnv after calling close()"

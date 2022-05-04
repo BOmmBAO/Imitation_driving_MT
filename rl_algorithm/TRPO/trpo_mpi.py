@@ -11,12 +11,12 @@ from collections import deque
 import tensorflow as tf
 import numpy as np
 
-import baselines.common.tf_util as U
-from baselines.common import explained_variance, zipsame, dataset, fmt_row
-from baselines import logger
-from baselines.common import colorize
-from baselines.common.mpi_adam import MpiAdam
-from baselines.common.cg import cg
+import rl_algorithm.common.tf_util as U
+from rl_algorithm.common import explained_variance, zipsame, dataset, fmt_row
+from rl_algorithm import logger
+from rl_algorithm.common import colorize
+from rl_algorithm.common.mpi_adam import MpiAdam
+from rl_algorithm.common.cg import cg
 from baselines.gail.statistics import stats
 from tensorflow.contrib.tensorboard.plugins import projector
 from numpy import linalg as LA

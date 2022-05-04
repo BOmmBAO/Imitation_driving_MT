@@ -3,6 +3,7 @@ import numpy as np
 import baselines.common.tf_util as U
 from baselines.a2c.utils import fc
 from tensorflow.python.ops import math_ops
+from baselines import logger
 
 class Pd(object):
     """
@@ -75,8 +76,7 @@ class CategoricalPdType(PdType):
 
 class MultiCategoricalPdType(PdType):
     def __init__(self, nvec):
-        self.ncats = nvec.astype('int32')
-        assert (self.ncats > 0).all()
+        self.ncats = nvec
     def pdclass(self):
         return MultiCategoricalPd
     def pdfromflat(self, flat):
@@ -177,7 +177,6 @@ class CategoricalPd(Pd):
         else:
             # already encoded
             assert x.shape.as_list() == self.logits.shape.as_list()
-
         return tf.nn.softmax_cross_entropy_with_logits_v2(
             logits=self.logits,
             labels=x)
@@ -206,8 +205,7 @@ class CategoricalPd(Pd):
 class MultiCategoricalPd(Pd):
     def __init__(self, nvec, flat):
         self.flat = flat
-        self.categoricals = list(map(CategoricalPd,
-            tf.split(flat, np.array(nvec, dtype=np.int32), axis=-1)))
+        self.categoricals = list(map(CategoricalPd, tf.split(flat, nvec, axis=-1)))
     def flatparam(self):
         return self.flat
     def mode(self):
@@ -230,7 +228,8 @@ class DiagGaussianPd(Pd):
         mean, logstd = tf.split(axis=len(flat.shape)-1, num_or_size_splits=2, value=flat)
         self.mean = mean
         self.logstd = logstd
-        self.std = tf.exp(logstd)
+        self.std = tf.exp(logstd)*logger.init_std
+        logger.log("Init std: ", logger.init_std)
     def flatparam(self):
         return self.flat
     def mode(self):
