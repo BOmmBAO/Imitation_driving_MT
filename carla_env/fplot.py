@@ -5,9 +5,6 @@ import numpy as np
 from utils import common
 import matplotlib.pyplot as plt
 plt.ion()
-import copy
-import utils.logger
-from utils.logger import TensorBoardOutputFormat
 from carla_env.feature import *
 from carla_env.sim_vehicle import *
 
