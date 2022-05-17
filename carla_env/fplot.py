@@ -1,8 +1,6 @@
 import carla
-import utils.common
 import math
 import numpy as np
-from utils import common
 import matplotlib.pyplot as plt
 plt.ion()
 from carla_env.feature import *

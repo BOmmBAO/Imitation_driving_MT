@@ -6,6 +6,7 @@ import plan_control.velocity_planner as velocity_planner
 from plan_control.pid import *
 from plan_control.linear_MPC import *
 from carla_env.rule_decision import *
+import logging
 
 
 
@@ -15,11 +16,12 @@ class VehicleInit():
         self.env = env
         self.ego_car = env.ego_car
         self.ego_car_config = CarConfig(env, self.ego_car)
-        self.lead_car = env.lead_car
-        self.lead_car_config = CarConfig(env, self.lead_car)
+        #self.lead_car = env.lead_car
+        #self.lead_car_config = CarConfig(env, self.lead_car)
 
         self.ego_car_config.fea_ext.update()
-        self.lead_car_config.fea_ext.update()
+        self.fea_ext = self.ego_car_config.fea_ext
+        #self.lead_car_config.fea_ext.update()
         self.reference = None
 
     def step_action(self, action, des_vel=12):
@@ -31,14 +33,15 @@ class VehicleInit():
             control_comd.throttle = np.float(action[0])
             control_comd.brake = 0
         control_comd.steer = np.float(action[1])
+        logging.debug('{}, {}, {}'.format(control_comd.throttle, control_comd.steer, control_comd.brake))
         self.ego_car.apply_control(control_comd)
         self.ego_car_config.fea_ext.update()
-        self.lead_car_config.fea_ext.update()
-        rx, ry, ryaw, s_sum = self.path.following_path(self.fea_ext.cur_wp)
+        #self.lead_car_config.fea_ext.update()
+        #rx, ry, ryaw, s_sum = self.path.following_path(self.fea_ext.cur_wp)
 
     def step_decision(self, decision):
         self.ego_car_config.fea_ext.update()
-        self.lead_car_config.fea_ext.update()
+        #self.lead_car_config.fea_ext.update()
         # is_wrong, self.reference = self.update_dec(decision[0], self.ego_car_config)
         # [rx, ry, ryaw, ref_vel] = self.reference
         merge_dist, ref_vel = self.decode_decision(decision[0], self.ego_car_config)
@@ -50,10 +53,10 @@ class VehicleInit():
             self.ego_car_config.fea_ext.ref_display(rx, ry)
             self.ego_car.apply_control(control_comd)
 
-            _rx, _ry, _ryaw, _s_sum = self.lead_car_config.path.update(0)
+            #_rx, _ry, _ryaw, _s_sum = self.lead_car_config.path.update(0)
             _poly_coe = velocity_planner.speed_profile_uniform(5)
-            _control_comd = self.lead_car_config.controller.update(_rx, _ry, _ryaw, _poly_coe)
-            self.lead_car.apply_control(_control_comd)
+            #_control_comd = self.lead_car_config.controller.update(_rx, _ry, _ryaw, _poly_coe)
+            #self.lead_car.apply_control(_control_comd)
             return False
         except:
             return True
@@ -61,10 +64,10 @@ class VehicleInit():
     def reset(self, env):
         self.ego_car = env.ego_car
         self.ego_car_config = CarConfig(env, self.ego_car)
-        self.lead_car = env.lead_car
-        self.lead_car_config = CarConfig(env, self.lead_car)
+        #self.lead_car = env.lead_car
+        #self.lead_car_config = CarConfig(env, self.lead_car)
         self.ego_car_config.fea_ext.update()
-        self.lead_car_config.fea_ext.update()
+        #self.lead_car_config.fea_ext.update()
         self.reference = None
 
     def rule_based_step(self):
@@ -139,7 +142,7 @@ class VehicleInit():
 
         return wrong_dec, [rx, ry, ryaw, target_vel]
 
-# ToDo zombie cars configuration
+# ToDo zombie cars configuration and try mpc instead of pid
 class CarConfig():
     def __init__(self, env, car):
         self.fea_ext = FeatureExt(env, car)

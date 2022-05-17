@@ -1,35 +1,58 @@
 import os
-from baselines import logger
-from baselines.common.vec_env import VecEnvWrapper
+
 from gym.wrappers.monitoring import video_recorder
+
+from rl_algorithm import logger
+from rl_algorithm.common.vec_env.base_vec_env import VecEnvWrapper
+from rl_algorithm.common.vec_env.dummy_vec_env import DummyVecEnv
+from rl_algorithm.common.vec_env.subproc_vec_env import SubprocVecEnv
+from rl_algorithm.common.vec_env.vec_frame_stack import VecFrameStack
+from rl_algorithm.common.vec_env.vec_normalize import VecNormalize
 
 
 class VecVideoRecorder(VecEnvWrapper):
     """
-    Wrap VecEnv to record rendered image as mp4 video.
+    Wraps a VecEnv or VecEnvWrapper object to record rendered image as mp4 video.
+    It requires ffmpeg or avconv to be installed on the machine.
+
+    :param venv: (VecEnv or VecEnvWrapper)
+    :param video_folder: (str) Where to save videos
+    :param record_video_trigger: (func) Function that defines when to start recording.
+                                        The function takes the current number of step,
+                                        and returns whether we should start recording or not.
+    :param video_length: (int)  Length of recorded videos
+    :param name_prefix: (str) Prefix to the video name
     """
 
-    def __init__(self, venv, directory, record_video_trigger, video_length=200):
-        """
-        # Arguments
-            venv: VecEnv to wrap
-            directory: Where to save videos
-            record_video_trigger:
-                Function that defines when to start recording.
-                The function takes the current number of step,
-                and returns whether we should start recording or not.
-            video_length: Length of recorded video
-        """
+    def __init__(self, venv, video_folder, record_video_trigger,
+                 video_length=200, name_prefix='rl-video'):
 
         VecEnvWrapper.__init__(self, venv)
+
+        self.env = venv
+        # Temp variable to retrieve metadata
+        temp_env = venv
+
+        # Unwrap to retrieve metadata dict
+        # that will be used by gym recorder
+        while isinstance(temp_env, VecNormalize) or isinstance(temp_env, VecFrameStack):
+            temp_env = temp_env.venv
+
+        if isinstance(temp_env, DummyVecEnv) or isinstance(temp_env, SubprocVecEnv):
+            metadata = temp_env.get_attr('metadata')[0]
+        else:
+            metadata = temp_env.metadata
+
+        self.env.metadata = metadata
+
         self.record_video_trigger = record_video_trigger
         self.video_recorder = None
 
-        self.directory = os.path.abspath(directory)
-        if not os.path.exists(self.directory): os.mkdir(self.directory)
+        self.video_folder = os.path.abspath(video_folder)
+        # Create output folder if needed
+        os.makedirs(self.video_folder, exist_ok=True)
 
-        self.file_prefix = "vecenv"
-        self.file_infix = '{}'.format(os.getpid())
+        self.name_prefix = name_prefix
         self.step_id = 0
         self.video_length = video_length
 
@@ -38,17 +61,17 @@ class VecVideoRecorder(VecEnvWrapper):
 
     def reset(self):
         obs = self.venv.reset()
-
         self.start_video_recorder()
-
         return obs
 
     def start_video_recorder(self):
         self.close_video_recorder()
 
-        base_path = os.path.join(self.directory, '{}.video.{}.video{:06}'.format(self.file_prefix, self.file_infix, self.step_id))
+        video_name = '{}-step-{}-to-step-{}'.format(self.name_prefix, self.step_id,
+                                                    self.step_id + self.video_length)
+        base_path = os.path.join(self.video_folder, video_name)
         self.video_recorder = video_recorder.VideoRecorder(
-                env=self.venv,
+                env=self.env,
                 base_path=base_path,
                 metadata={'step_id': self.step_id}
                 )
@@ -71,7 +94,7 @@ class VecVideoRecorder(VecEnvWrapper):
                 logger.info("Saving video to ", self.video_recorder.path)
                 self.close_video_recorder()
         elif self._video_enabled():
-                self.start_video_recorder()
+            self.start_video_recorder()
 
         return obs, rews, dones, infos
 
@@ -79,7 +102,7 @@ class VecVideoRecorder(VecEnvWrapper):
         if self.recording:
             self.video_recorder.close()
         self.recording = False
-        self.recorded_frames = 0
+        self.recorded_frames = 1
 
     def close(self):
         VecEnvWrapper.close(self)

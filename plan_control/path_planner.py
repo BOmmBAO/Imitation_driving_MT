@@ -1,6 +1,6 @@
 from plan_control.cubic_spline import Spline2D
 from plan_control.Bezier_curve import calc_path
-from utils import common
+from carla_env import common
 import numpy as np
 import math
 from carla_env.rule_decision import STATUS

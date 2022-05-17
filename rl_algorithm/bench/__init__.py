@@ -1,2 +1,1 @@
-from baselines.bench.benchmarks import *
-from baselines.bench.monitor import *
+from rl_algorithm.bench.monitor import Monitor, load_results

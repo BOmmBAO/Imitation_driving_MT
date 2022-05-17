@@ -1,8 +1,7 @@
 import carla
-import utils.common
+import carla_env.common as common
 import math
 import numpy as np
-from utils import common
 import matplotlib.pyplot as plt
 plt.ion()
 
@@ -278,6 +277,7 @@ class FeatureExt():
         else:
             return None
 
+    # get the zombie cars information on the lane
     def find_cars_onlane(self, lane):
         forwards_cars, backwards_cars = [], []
         ego_pos = [self.vehicle.get_location().x, self.vehicle.get_location().y]
