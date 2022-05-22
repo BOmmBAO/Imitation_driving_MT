@@ -12,19 +12,20 @@ import logging
 
 class VehicleInit():
 
-    def __init__(self, env):
+    def __init__(self, env, decision):
         self.env = env
-        self.ego_car = env.ego_car
-        self.ego_car_config = CarConfig(env, self.ego_car)
-        #self.lead_car = env.lead_car
-        #self.lead_car_config = CarConfig(env, self.lead_car)
-
-        self.ego_car_config.fea_ext.update()
-        self.fea_ext = self.ego_car_config.fea_ext
-        #self.lead_car_config.fea_ext.update()
-        self.reference = None
+        self.ego_car = self.env.ego_car
+        self.decision = decision
+        if self.decision:
+            self.ego_car_config = CarConfig(env)
+        else:
+            self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=0.0))
+        self.fea_ext = FeatureExt(env, self.ego_car)
+        self.fea_ext.update()
+        #self.reference = None
 
     def step_action(self, action, des_vel=12):
+        self.fea_ext.update()
         control_comd = carla.VehicleControl()
         if action[0] < 0:
             control_comd.throttle = 0
@@ -35,13 +36,11 @@ class VehicleInit():
         control_comd.steer = np.float(action[1])
         logging.debug('{}, {}, {}'.format(control_comd.throttle, control_comd.steer, control_comd.brake))
         self.ego_car.apply_control(control_comd)
-        self.ego_car_config.fea_ext.update()
-        #self.lead_car_config.fea_ext.update()
+        self.fea_ext.update()
         #rx, ry, ryaw, s_sum = self.path.following_path(self.fea_ext.cur_wp)
 
     def step_decision(self, decision):
-        self.ego_car_config.fea_ext.update()
-        #self.lead_car_config.fea_ext.update()
+        self.fea_ext.update()
         # is_wrong, self.reference = self.update_dec(decision[0], self.ego_car_config)
         # [rx, ry, ryaw, ref_vel] = self.reference
         merge_dist, ref_vel = self.decode_decision(decision[0], self.ego_car_config)
@@ -50,24 +49,21 @@ class VehicleInit():
             self.reference = [rx, ry, ryaw, ref_vel]
             poly_coe = velocity_planner.speed_profile_uniform(ref_vel)
             control_comd = self.ego_car_config.controller.update(rx, ry, ryaw, poly_coe)
-            self.ego_car_config.fea_ext.ref_display(rx, ry)
+            self.fea_ext.ref_display(rx, ry)
             self.ego_car.apply_control(control_comd)
-
-            #_rx, _ry, _ryaw, _s_sum = self.lead_car_config.path.update(0)
             _poly_coe = velocity_planner.speed_profile_uniform(5)
-            #_control_comd = self.lead_car_config.controller.update(_rx, _ry, _ryaw, _poly_coe)
-            #self.lead_car.apply_control(_control_comd)
             return False
         except:
             return True
 
     def reset(self, env):
         self.ego_car = env.ego_car
-        self.ego_car_config = CarConfig(env, self.ego_car)
-        #self.lead_car = env.lead_car
-        #self.lead_car_config = CarConfig(env, self.lead_car)
-        self.ego_car_config.fea_ext.update()
-        #self.lead_car_config.fea_ext.update()
+        if self.decision:
+            self.ego_car_config = CarConfig(env, self.ego_car)
+        else:
+            self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=0.0))
+        self.fea_ext = FeatureExt(env, self.ego_car)
+        self.fea_ext.update()
         self.reference = None
 
     def rule_based_step(self):
@@ -144,8 +140,8 @@ class VehicleInit():
 
 # ToDo zombie cars configuration and try mpc instead of pid
 class CarConfig():
-    def __init__(self, env, car):
-        self.fea_ext = FeatureExt(env, car)
+    def __init__(self, env):
+        self.fea_ext = None
         self.path = path_planner(env, self.fea_ext)
         self.dec_maker = RuleBased(self.fea_ext)
         self.controller = PID_controller(self.fea_ext)

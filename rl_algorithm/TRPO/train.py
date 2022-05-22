@@ -6,16 +6,16 @@ from rl_algorithm.common.noise import NormalActionNoise
 from carla_e2e import CarlaEnv
 import sys
 import argparse
-
-def main(load_model,step_per_ep, repeat_action,ep_length, seed = 7):
-    env = CarlaEnv(step_per_ep, repeat_action)
+import tensorflow as tf
+def main(load_model,ep_length, repeat_action, seed = 7):
+    env = CarlaEnv(ep_length, repeat_action)
     try:
         if load_model:
             model = TRPO.load('trpo_e2e', env, action_noise = NormalActionNoise(mean=np.array([0.3, 0]), sigma=np.array([0.5, 0.1])))
         else:
             model = TRPO(MlpPolicy,
                          env,
-                         verbose=2,
+                         verbose=0,
                          seed = seed,
                          tensorboard_log='./sem_trpo')
         model.learn(total_timesteps=20000,
@@ -43,4 +43,4 @@ if __name__ == "__main__":
     ep_length = args.episode_length
     seed = args.seed
 
-    main(load_model,steps_per_ep, repeat_action, ep_length)
+    main(load_model,steps_per_ep, repeat_action)

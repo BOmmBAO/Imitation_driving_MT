@@ -8,10 +8,11 @@ class SimInit:
 
     def __init__(self, args):
         self.client = carla.Client(args.host, args.port)
-        self.client.set_timeout(10.0)
+        self.client.set_timeout(20.0)
         self.dt = 0.1
 
         self.world = self.client.load_world('Town03')
+        self._map = self.world.get_map()
         self.world.freeze_all_traffic_lights(True)
 
         self.original_settings = self.world.get_settings()
@@ -25,8 +26,6 @@ class SimInit:
 
         self.spectator = self.world.get_spectator()
         self.ego_car, self.zombie_cars, self.visible_zombie_cars, self.visible_zombie_cars_index = None, None, [], []
-        self.lead_car = None
-        self.collision_sensor = None
         self.collision_event = False
 
         self.spawn_points = self.world.get_map().get_spawn_points()
@@ -35,7 +34,9 @@ class SimInit:
         model3_bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
         model3_bp.set_attribute('color', "200, 50, 50")
         self.ego_car = self.world.spawn_actor(model3_bp, self.init_spawn_point)
+        print(self.ego_car)
         self.ego_car.set_autopilot(False)
+        self.zombie_cars = self.add_zombie_cars(self.spawn_points, 10)
         self.collision_sensor = CollisionSensor(self.ego_car)
         self.laneinvasion_sensor = LaneInvasionSensor(self.ego_car)
         self.world.tick()
@@ -46,13 +47,11 @@ class SimInit:
 
     def init(self):
         self.ego_car = self.add_ego_car(self.init_spawn_point)
-        #print("sceuss")
-        #self.lead_car = self.add_lead_car(False, self.init_spawn_point)
-        #self.zombie_cars = self.add_zombie_cars(self.spawn_points, 0)
-        #self.zombie_cars.append(self.lead_car)
+        self.zombie_cars = self.add_zombie_cars(self.spawn_points, 10)
         self.collision_sensor = CollisionSensor(self.ego_car)
         self.laneinvasion_sensor = LaneInvasionSensor(self.ego_car)
-
+        self.lane_invasion_hist = []
+        self.world.tick()
 
     def seed(self, seed):
         if not seed:
@@ -69,7 +68,7 @@ class SimInit:
     def destroy(self):
         actors = [self.collision_sensor.sensor,
                   self.laneinvasion_sensor.sensor,
-                  self.ego_car]
+                  self.ego_car]+self.zombie_cars
         # actors = [self.collision_sensor.sensor,
         #           self.ego_car, self.lead_car] + self.zombie_cars
 
@@ -185,7 +184,6 @@ class SimInit:
 
     def term_check(self):
         collision_hist = self.collision_sensor.get_history()
-        invasion_hist = self.laneinvasion_sensor.get_history()
         if self._collision_check():
             print("COLLISION!!")
             self.collision_event = True
@@ -193,10 +191,6 @@ class SimInit:
         elif any(collision_hist):
             print("COLLISION detected from sensor!!")
             self.collision_event = True
-            return True
-        elif any(invasion_hist):
-            print("LANE INVASION!!", invasion_hist)
-            self.invasion_event = True
             return True
         else:
             return False
@@ -237,15 +231,12 @@ class SimInit:
                     break
         return is_hazard
 
-    # @staticmethod
-    # def on_invasion(weak_self, event):
-    #     self = weak_self()
-    #     if not self:
-    #         return
-    #
-    #     # Call on_invasion_fn
-    #     if callable(self.on_invasion_fn):
-    #         self.on_invasion_fn(event)
+    def on_roadcentre(self):
+        actor = self.ego_car
+        ego_pos = self._map.get_waypoint(location=actor.get_location(), project_to_road=False).transform.location
+        lane_pos = self._map.get_waypoint(location=actor.get_location(), project_to_road=True).transform.location
+        dis = np.sqrt((ego_pos.x-lane_pos.x)**2+(ego_pos.y-lane_pos.y)**2)
+        return dis
 
 
 

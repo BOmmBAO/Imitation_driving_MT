@@ -49,7 +49,7 @@ class FeatureExt():
         self.stop_sign = False
         self.start_sign = True
         self.stop_wps = None
-        self.time = 200
+        #self.time = 200
         self.traffic_light = None
         self.traffic_light_flag = False
 
@@ -181,8 +181,8 @@ class FeatureExt():
         seq = 1
         while seq < horizon:
             exp_index.append(round(seq / self.wp_ds))
-            # seq *= self.distance_rate
-            seq += 5
+            seq *= self.distance_rate
+            #seq += 5
         return exp_index
 
     def find_road_border(self, wp_list):
@@ -563,7 +563,7 @@ class VehicleInfo:
     def __init__(self, vehicle, des_vel=7):
         self.vehicle = vehicle
         self.target_vel = des_vel
-        self.dt = 0.1
+        #self.dt = 0.1
 
         self.merge_length = 0
         self.speed_max = 40
@@ -575,6 +575,7 @@ class VehicleInfo:
         self.shape = [self.vehicle.bounding_box.extent.x, self.vehicle.bounding_box.extent.y,
                       self.vehicle.bounding_box.extent.z]
 
+        self._location = None
         self.x = None
         self.y = None
         self.v = None
@@ -587,6 +588,7 @@ class VehicleInfo:
         self.update()  # initialize
 
     def update(self):
+        self._location = self.vehicle.get_location()
         self.x = self.vehicle.get_location().x
         self.y = self.vehicle.get_location().y
 

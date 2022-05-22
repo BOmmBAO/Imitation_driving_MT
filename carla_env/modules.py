@@ -59,7 +59,7 @@ class LaneInvasionSensor(object):
         self = weak_self()
         if not self:
             return
-        self.history.append(True)
+        self.history.append(event)
 
 class CameraSensor(object):
 

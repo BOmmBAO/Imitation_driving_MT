@@ -24,10 +24,13 @@ class CarlaEnv(gym.Env):
         argparser.add_argument('--repeat-action',default=5, type=int, help='number of steps to repeat each action')
         #argparser.add_argument('--sync', action='store_true', help='Synchronous mode execution')
         args = argparser.parse_args()
+        self.steps = 0
+        self.total_steps = 200
+        self.decision = False
         self.step_per_ep = step_per_ep
         self.repeat_action = repeat_action
         self.sim = SimInit(args)
-        self.car = VehicleInit(self.sim)
+        self.car = VehicleInit(self.sim, self.decision)
         self.sigma = {"sigma_pos": 0.3, "sigma_vel_upper": 0.6,
                        "sigma_vel_lower": 1.0, "sigma_yaw": 0.4}
 
@@ -52,6 +55,8 @@ class CarlaEnv(gym.Env):
 
 
     def step(self, action):
+        if self.steps <
+        self.steps +=1
         total_reward = 0
         for _ in range(self.repeat_action):
 
@@ -62,9 +67,9 @@ class CarlaEnv(gym.Env):
             done = True if self.sim.term_check() else False
             if done:
                 break
-        # print("Action:", action)
-        # print("Reward:", total_reward)
-        # print("DONE?", done)
+        print("Action:", action)
+        print("Reward:", total_reward)
+        print("DONE?", done)
         return ob, total_reward, done, {}
 
     #reset environment for new episode
@@ -90,27 +95,22 @@ class CarlaEnv(gym.Env):
     def _plot_zombie_boxx(self, obs):
         self.fea_plot.plot_lane_andZombie_inEgoCar(obs)
 #TODO: add overtaking reward
-    def _get_reward(self, sigmas):
+    def _get_reward(self, sigmas, vel_des=12):
         car_x, car_y, car_v, car_yaw = self.car.fea_ext.vehicle_info.x, self.car.fea_ext.vehicle_info.y, \
                                 self.car.fea_ext.vehicle_info.v, self.car.fea_ext.vehicle_info.yaw
-        if self.car.reference is None:
-            return 0
-        [rx, ry, ryaw, vel_des] = self.car.reference
-        lane_width = self.car.fea_ext.cur_lane_width
+        lane_width = self.car.fea_ext.cur_lane_width/2
+        print(car_v)
 
-        nearest_point, nearest_dist = None, 10
-        for [x, y, yaw] in zip(rx, ry, ryaw):
-            _dist = np.hypot(car_x-x, car_y-y)
-            if _dist < nearest_dist:
-                nearest_point = [x, y, yaw]
-                nearest_dist = _dist
+        nearest_point = self.sim._map.get_waypoint(location=self.car.fea_ext.vehicle_info._location, project_to_road=True).transform
+        car_point = self.sim._map.get_waypoint(location=self.car.fea_ext.vehicle_info._location, project_to_road=False).transform
 
         # sigma_pos = 0.3
         sigma_pos = sigmas["sigma_pos"]
-        phi = math.atan2(car_y - nearest_point[1], car_x - nearest_point[0])
-        delta = pi_2_pi(ryaw[0] - phi)
-        ct_err = math.sin(delta) * nearest_dist  # Cross Track Error
-        track_err = abs(ct_err) / lane_width
+        # phi = math.atan2(car_y - nearest_point[1], car_x - nearest_point[0])
+        # delta = pi_2_pi(ryaw[0] - phi)
+        # ct_err = math.sin(delta) * nearest_dist  # Cross Track Error
+        ct_err = np.sqrt((car_point.location.x-nearest_point.location.x)**2+(car_point.location.y-nearest_point.location.y)**2)
+        track_err = ct_err / lane_width
         track_rewd = np.exp(-track_err**2 / (2 * sigma_pos**2))
 
         # velocity reward
@@ -121,10 +121,16 @@ class CarlaEnv(gym.Env):
 
         # angle reward
         sigma_yaw = sigmas["sigma_yaw"]
-        yaw_err = abs(pi_2_pi(nearest_point[2]-car_yaw))
+        yaw_err = abs(pi_2_pi(nearest_point.rotation.yaw-car_yaw))
         ang_rewd = np.exp(-yaw_err**2 / (2 * sigma_yaw ** 2))
 
-        accident_cost = -50 if self.sim.collision_event or self.sim.invasion_event else 0
+        accident_cost =0
+        if self.sim.collision_event:
+            accident_cost -= 10
+            self.sim.collision_sensor.reset()
+        if len(self.sim.laneinvasion_sensor.get_history()) != 0:
+            accident_cost -= 0.5
+            self.sim.laneinvasion_sensor.reset()
         reward = track_rewd * v_rewd * ang_rewd + accident_cost
         #self.ep_len +=1
         #self.last_status = self.status

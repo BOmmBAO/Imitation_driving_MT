@@ -37,7 +37,7 @@ class CarlaEnv(gym.Env):
         self.obs_index = self.car_fea_ext.obs_index
         self.pre_obs_index = self.car_fea_ext.pre_obs_index
         self.zombie_num = self.car_fea_ext.zombie_num
-        self.action_space = spaces.MultiDiscrete([0,5])
+        self.action_space = spaces.Discrete(5)
 
     def step(self, decision):
         total_step = 30 if decision == 0 else 3
@@ -89,11 +89,6 @@ class CarlaEnv(gym.Env):
         sigma_vel = sigma_vel_upper if car_v <= vel_des else sigma_vel_lower
         v_err = car_v - vel_des
         v_rewd = np.exp(-v_err**2 / (2*sigma_vel**2))
-
-        # angle reward
-        sigma_yaw = sigmas["sigma_yaw"]
-        yaw_err = abs(pi_2_pi(nearest_point[2]-car_yaw))
-        ang_rewd = np.exp(-yaw_err**2 / (2 * sigma_yaw ** 2))
 
         accident_cost = -10 if self.sim.collision_event is True else 0
         reward = v_rewd + accident_cost
