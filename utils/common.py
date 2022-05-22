@@ -78,3 +78,10 @@ class RotatedRectangle(object):
         Obtain a intersection point between two contour.
         """
         return self.get_contour().intersection(other.get_contour())
+
+    def sensor_callback(sensor_data, sensor_queue, sensor_name):
+        if 'lidar' in sensor_name:
+            sensor_data.save_to_disk(os.path.join('../outputs/output_synchronized', '%06d.ply' % sensor_data.frame))
+        if 'camera' in sensor_name:
+            sensor_data.save_to_disk(os.path.join('../outputs/output_synchronized', '%06d.png' % sensor_data.frame))
+        sensor_queue.put((sensor_data.frame, sensor_name))

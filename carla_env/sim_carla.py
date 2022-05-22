@@ -3,7 +3,7 @@ import random
 from carla_env.modules import CollisionSensor, LaneInvasionSensor
 import numpy as np
 import carla_env.common as common
-
+from queue import Queue
 class SimInit:
 
     def __init__(self, args):
@@ -23,7 +23,9 @@ class SimInit:
 
         traffic_manager = self.client.get_trafficmanager()
         traffic_manager.set_synchronous_mode(True)
-
+        self.sensor_queue = Queue()
+        self.camera = None
+        self.lidar = None
         self.spectator = self.world.get_spectator()
         self.ego_car, self.zombie_cars, self.visible_zombie_cars, self.visible_zombie_cars_index = None, None, [], []
         self.collision_event = False
@@ -53,6 +55,33 @@ class SimInit:
         self.lane_invasion_hist = []
         self.world.tick()
 
+    def add_sensor(self):
+        # add a camera
+        camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
+        # camera relative position related to the vehicle
+        camera_transform = carla.Transform(carla.Location(x=1.5, z=2.4))
+        self.camera = self.world.spawn_actor(camera_bp, camera_transform, attach_to=self.ego_car)
+        # set the callback function
+        self.camera.listen(lambda image: common.sensor_callback(image, self.sensor_queue, "camera"))
+
+
+        # we also add a lidar on it
+        lidar_bp = self.world.get_blueprint_library().find('sensor.lidar.ray_cast')
+        lidar_bp.set_attribute('channels', str(32))
+        lidar_bp.set_attribute('points_per_second', str(90000))
+        lidar_bp.set_attribute('rotation_frequency', str(40))
+        lidar_bp.set_attribute('range', str(20))
+
+        # set the relative location
+        lidar_location = carla.Location(0, 0, 2)
+        lidar_rotation = carla.Rotation(0, 0, 0)
+        lidar_transform = carla.Transform(lidar_location, lidar_rotation)
+        # spawn the lidar
+        self.lidar = self.world.spawn_actor(lidar_bp, lidar_transform, attach_to=self.ego_car)
+        self.lidar.listen(
+            lambda point_cloud: common.sensor_callback(point_cloud, self.sensor_queue, "lidar"))
+
+
     def seed(self, seed):
         if not seed:
             seed = 7
@@ -68,7 +97,7 @@ class SimInit:
     def destroy(self):
         actors = [self.collision_sensor.sensor,
                   self.laneinvasion_sensor.sensor,
-                  self.ego_car]+self.zombie_cars
+                  self.ego_car, self.lidar, self.camera]+self.zombie_cars
         # actors = [self.collision_sensor.sensor,
         #           self.ego_car, self.lead_car] + self.zombie_cars
 
