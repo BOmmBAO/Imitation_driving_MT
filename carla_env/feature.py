@@ -1,10 +1,9 @@
 import carla
-import carla_env.common as common
 import math
 import numpy as np
+from carla_env import common
 import matplotlib.pyplot as plt
 plt.ion()
-
 
 
 class STATUS:
@@ -26,7 +25,7 @@ class FeatureExt():
         self.world = env.world
         self.vehicle = vehicle
         self.vehicle_info = VehicleInfo(vehicle)
-        self.map = self.world.get_map()
+        self.map = env._map
         self.zombie_cars = env.zombie_cars
         self.cur_lane = None
         self.cur_lane_width = None
@@ -43,13 +42,13 @@ class FeatureExt():
         self.wp_index = self.exponential_index(horizon=70)
 
         self.visible_zombie_cars = env.visible_zombie_cars
-        self.show_dt = env.dt * 1.5
+        self.show_dt = self.dt * 1.5
         self.is_junction = False
 
         self.stop_sign = False
         self.start_sign = True
         self.stop_wps = None
-        #self.time = 200
+        self.time = 200
         self.traffic_light = None
         self.traffic_light_flag = False
 
@@ -67,7 +66,7 @@ class FeatureExt():
 
     def update(self):
         self.vehicle_info.update()
-        self.current_loc = self.vehicle.get_transform().location
+        self.current_loc = self.vehicle.get_location()
         self.cur_lane = self.map.get_waypoint(self.current_loc)
         self.cur_lane_width = self.cur_lane.lane_width
         self.wp_list = self.wp_list_extract(self.cur_lane)
@@ -134,7 +133,7 @@ class FeatureExt():
     def expon_down_sample(self):
         wp = []
         for index in self.wp_index:
-            if index <= len(self.waypoints_buffer):
+            if index < len(self.waypoints_buffer):
                 wp.append(self.waypoints_buffer[index])
         while len(wp) < len(self.wp_index):
             print("The number of waypoints is wrong!")
@@ -181,19 +180,19 @@ class FeatureExt():
         seq = 1
         while seq < horizon:
             exp_index.append(round(seq / self.wp_ds))
-            seq *= self.distance_rate
-            #seq += 5
+            # seq *= self.distance_rate
+            seq += 5
         return exp_index
 
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            seq = 1.0
+            seq = 0.5
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
                 # seq *= self.distance_rate
-                seq += 5
+                seq += 1
                 if seq > max_distance:
                     break
             while len(wp_l) < len(self.wp_index):
@@ -277,7 +276,6 @@ class FeatureExt():
         else:
             return None
 
-    # get the zombie cars information on the lane
     def find_cars_onlane(self, lane):
         forwards_cars, backwards_cars = [], []
         ego_pos = [self.vehicle.get_location().x, self.vehicle.get_location().y]
@@ -360,18 +358,19 @@ class FeatureExt():
     # -- Feature Vector used in Neural Networks ------------------------------------
     # ==============================================================================
 
-    def obs_update(self):
+    def obs_update(self, one_car=True):
         #feature list
         self.info_dict.clear()
-        self.ext_egocar_info(self.vehicle, local_frame = True)
-        self.ext_zombiecars_info(local_frame = True)
-        self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = True)
+        self.ext_egocar_info(self.vehicle, local_frame = False)
+        if not one_car:
+            self.ext_zombiecars_info(local_frame = True)
+        self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = False)
         output_info = self.dic2list(self.info_dict)
         self.observation = np.array(output_info)
 
         if self.obs_index is None:
             self.obs_index = self.ext_obs_index(self.info_dict)
-            del(self.info_dict['ego_car_world_trans'])
+            #del(self.info_dict['ego_car_world_trans'])
             self.pre_obs_index = self.ext_obs_index(self.info_dict)
 
 
@@ -560,21 +559,20 @@ class FeatureExt():
 
 class VehicleInfo:
 
-    def __init__(self, vehicle, des_vel=7):
+    def __init__(self, vehicle):
         self.vehicle = vehicle
-        self.target_vel = des_vel
-        #self.dt = 0.1
+        self.dt = 0.1
 
         self.merge_length = 0
         self.speed_max = 40
         self.acc_max = 10
         self.status = STATUS.FOLLOWING
+        #print("ego car222",vehicle)
 
         wb_vec = vehicle.get_physics_control().wheels[0].position - vehicle.get_physics_control().wheels[2].position
         self.wheelbase = np.sqrt(wb_vec.x ** 2 + wb_vec.y ** 2 + wb_vec.z ** 2) / 100
         self.shape = [self.vehicle.bounding_box.extent.x, self.vehicle.bounding_box.extent.y,
                       self.vehicle.bounding_box.extent.z]
-
         self._location = None
         self.x = None
         self.y = None
@@ -583,7 +581,7 @@ class VehicleInfo:
         self.yaw = None
         self.pitch = None
         self.roll = None
-        self.dir_vec = None
+        #self.dir_vec = None
         self.steer = None
         self.update()  # initialize
 
@@ -593,15 +591,17 @@ class VehicleInfo:
         self.y = self.vehicle.get_location().y
 
         _v = self.vehicle.get_velocity()
+        ego_velocity = np.array([_v.x, _v.y])
         _acc = self.vehicle.get_acceleration()
-        self.v = np.sqrt(_v.x ** 2 + _v.y ** 2)
-        self.acc = np.sqrt(_acc.x ** 2 + _acc.y ** 2)
+        ego_acc = np.array([_acc.x, _acc.y])
+        self.v = np.linalg.norm(ego_velocity)
+        self.acc = np.linalg.norm(ego_acc)
         self.steer = self.vehicle.get_control().steer
-        self.dir_vec = self.vehicle.get_physics_control().wheels[0].position - \
-                       self.vehicle.get_physics_control().wheels[2].position
-        self.yaw = math.atan2(self.dir_vec.y, self.dir_vec.x)
+        # self.dir_vec = self.vehicle.get_physics_control().wheels[0].position - \
+        #                 self.vehicle.get_physics_control().wheels[2].position
+        #self.yaw = math.atan2(self.dir_vec.y, self.dir_vec.x)
+        self.yaw = self.vehicle.get_transform().rotation.yaw
         self.roll = 0
         self.pitch = 0
 
         self.merge_length = max(4 * self.v, 12)
-

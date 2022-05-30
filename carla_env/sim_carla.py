@@ -2,14 +2,18 @@ import carla
 import random
 from carla_env.modules import CollisionSensor, LaneInvasionSensor
 import numpy as np
-import carla_env.common as common
-from queue import Queue
+from carla_env.common import *
+from absl import logging
+import time
+
+
 class SimInit:
 
-    def __init__(self, args):
+    def __init__(self, args, desired_speed):
         self.client = carla.Client(args.host, args.port)
-        self.client.set_timeout(20.0)
-        self.dt = 0.1
+        self.client.set_timeout(10.0)
+        self.desired_speed = desired_speed
+        self.dt = 0.05
 
         self.world = self.client.load_world('Town03')
         self._map = self.world.get_map()
@@ -23,94 +27,55 @@ class SimInit:
 
         traffic_manager = self.client.get_trafficmanager()
         traffic_manager.set_synchronous_mode(True)
-        self.sensor_queue = Queue()
-        self.camera = None
-        self.lidar = None
+
         self.spectator = self.world.get_spectator()
         self.ego_car, self.zombie_cars, self.visible_zombie_cars, self.visible_zombie_cars_index = None, None, [], []
-        self.collision_event = False
+        self.lead_car = None
 
-        self.spawn_points = self.world.get_map().get_spawn_points()
+        random.seed()
+        self.spawn_points = self._map.get_spawn_points()
         self.init_spawn_point = self.spawn_points[1]
         self.spawn_points.remove(self.init_spawn_point)
-        model3_bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
-        model3_bp.set_attribute('color', "200, 50, 50")
-        self.ego_car = self.world.spawn_actor(model3_bp, self.init_spawn_point)
-        print(self.ego_car)
-        self.ego_car.set_autopilot(False)
-        self.zombie_cars = self.add_zombie_cars(self.spawn_points, 10)
-        self.collision_sensor = CollisionSensor(self.ego_car)
-        self.laneinvasion_sensor = LaneInvasionSensor(self.ego_car)
-        self.world.tick()
-        current_loc = self.ego_car.get_transform().location
-        self.spectator.set_transform(carla.Transform(current_loc +
-                                                     carla.Location(x=-20, z=70),
-                                                     carla.Rotation(pitch=-70)))
+
+        self.init()
+        self._sensor()
 
     def init(self):
-        self.ego_car = self.add_ego_car(self.init_spawn_point)
-        self.zombie_cars = self.add_zombie_cars(self.spawn_points, 10)
-        self.collision_sensor = CollisionSensor(self.ego_car)
-        self.laneinvasion_sensor = LaneInvasionSensor(self.ego_car)
-        self.lane_invasion_hist = []
-        self.world.tick()
-
-    def add_sensor(self):
-        # add a camera
-        camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
-        # camera relative position related to the vehicle
-        camera_transform = carla.Transform(carla.Location(x=1.5, z=2.4))
-        self.camera = self.world.spawn_actor(camera_bp, camera_transform, attach_to=self.ego_car)
-        # set the callback function
-        self.camera.listen(lambda image: common.sensor_callback(image, self.sensor_queue, "camera"))
-
-
-        # we also add a lidar on it
-        lidar_bp = self.world.get_blueprint_library().find('sensor.lidar.ray_cast')
-        lidar_bp.set_attribute('channels', str(32))
-        lidar_bp.set_attribute('points_per_second', str(90000))
-        lidar_bp.set_attribute('rotation_frequency', str(40))
-        lidar_bp.set_attribute('range', str(20))
-
-        # set the relative location
-        lidar_location = carla.Location(0, 0, 2)
-        lidar_rotation = carla.Rotation(0, 0, 0)
-        lidar_transform = carla.Transform(lidar_location, lidar_rotation)
-        # spawn the lidar
-        self.lidar = self.world.spawn_actor(lidar_bp, lidar_transform, attach_to=self.ego_car)
-        self.lidar.listen(
-            lambda point_cloud: common.sensor_callback(point_cloud, self.sensor_queue, "lidar"))
-
-
-    def seed(self, seed):
-        if not seed:
-            seed = 7
-        random.seed(seed)
-        self._np_random = np.random.RandomState(seed)
-        return seed
+        self.add_ego_car(self.init_spawn_point)
+        self.current_wpt = self._map.get_waypoint(location=self.ego_car.get_location())
+        #self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=1.0))
+        yaw = (self.ego_car.get_transform().rotation.yaw) * np.pi / 180.0
+        init_speed = carla.Vector3D(
+            x=self.desired_speed * np.cos(yaw),
+            y=self.desired_speed * np.sin(yaw))
+        self.ego_car.set_target_velocity(init_speed)
+        time.sleep(4)
+        #self.lead_car = self.add_lead_car(self.init_spawn_point)
+        #self.zombie_cars = self.add_zombie_cars(self.spawn_points, 0)
+        #self.zombie_cars.append(self.lead_car)
+        self.update()
 
     def reset(self):
-        self.collision_event = False
         self.destroy()
         self.init()
+        self._sensor()
+
 
     def destroy(self):
+        self.collision_event = False
+        self.lane_event = False
         actors = [self.collision_sensor.sensor,
-                  self.laneinvasion_sensor.sensor,
-                  self.ego_car, self.lidar, self.camera]+self.zombie_cars
+                  self.lane_sensor.sensor,
+                  self.ego_car]
         # actors = [self.collision_sensor.sensor,
         #           self.ego_car, self.lead_car] + self.zombie_cars
-
         for actor in actors:
-            if hasattr(actor, 'is_listening') and actor.is_listening:
-                actor.stop()
             if actor.is_alive:
                 actor.destroy()
 
     def update(self):
         self.world.tick()
-        # if self.zombie_cars:
-        #     self._visible_zombie_cars_filter()
+        #self._visible_zombie_cars_filter()
         self._spec_update()
 
     def _spec_update(self):
@@ -118,13 +83,25 @@ class SimInit:
         self.spectator.set_transform(carla.Transform(current_loc +
                                      carla.Location(x=-20, z=70),
                                      carla.Rotation(pitch=-70)))
+    def _sensor(self):
+        self.collision_sensor = CollisionSensor(self.ego_car)
+        self.lane_sensor = LaneInvasionSensor(self.ego_car)
+
 
     def add_ego_car(self, spawn_point, color="200, 50, 50"):
-        model3_bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
-        model3_bp.set_attribute('color', color)
-        ego_car = self.world.spawn_actor(model3_bp, spawn_point)
-        ego_car.set_autopilot(False)
-        return ego_car
+        spawn_start = time.time()
+        while True:
+            try:
+                model3_bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
+                model3_bp.set_attribute('color', color)
+                self.ego_car = self.world.spawn_actor(model3_bp, spawn_point)
+                self.ego_car.set_autopilot(False)
+                break
+            except Exception as e:
+                logging.error('Error carla 141 {}'.format(str(e)))
+                time.sleep(0.01)
+            if time.time() > spawn_start + 3:
+                raise Exception('Can\'t spawn a car')
 
     def add_zombie_cars(self, spawn_points, count=10):
         zombie_cars = []
@@ -147,18 +124,15 @@ class SimInit:
                     count -= 1
         return zombie_cars
 
-    def add_lead_car(self, event, s_point):
-        if event:
-            cur_lane = self.world.get_map().get_waypoint(s_point.location)
-            point = cur_lane.next(20)[0]
-            spawn_point = carla.Transform(point.transform.location + carla.Location(z=s_point.location.z),
-                                         point.transform.rotation)
-            model3_bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
-            model3_bp.set_attribute('color', "50, 50, 200")
-            lead_car = self.world.spawn_actor(model3_bp, spawn_point)
-            lead_car.set_autopilot(False)
-        else:
-            lead_car = None
+    def add_lead_car(self, s_point):
+        cur_lane = self._map.get_waypoint(s_point.location)
+        point = cur_lane.next(20)[0]
+        spawn_point = carla.Transform(point.transform.location + carla.Location(z=s_point.location.z),
+                                     point.transform.rotation)
+        model3_bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
+        model3_bp.set_attribute('color', "50, 50, 200")
+        lead_car = self.world.spawn_actor(model3_bp, spawn_point)
+        lead_car.set_autopilot(False)
 
         return lead_car
 
@@ -166,7 +140,7 @@ class SimInit:
         ego_cars, velocity_list = [], []
         spawn_points = []
 
-        cur_lane = self.world.get_map().get_waypoint(s_point.location)
+        cur_lane = self._map.get_waypoint(s_point.location)
         right_lane = cur_lane.get_right_lane()
         left_lane = cur_lane.get_left_lane()
         lleft_lane = left_lane.get_left_lane()
@@ -181,7 +155,7 @@ class SimInit:
 
         _bp = self.world.get_blueprint_library().find('vehicle.tesla.model3')
         _bp.set_attribute('color', "50, 50, 200")
-        np.random.shuffle(spawn_points)
+        random.shuffle(spawn_points)
         for [point, v] in spawn_points:
             if count <= 0:
                 break
@@ -211,18 +185,27 @@ class SimInit:
         for index in visible_zombie_cars_index:
             self.visible_zombie_cars.append(self.zombie_cars[index[1]])
 
-    def term_check(self):
+    def terminal_check(self):
         collision_hist = self.collision_sensor.get_history()
+
         if self._collision_check():
             print("COLLISION!!")
             self.collision_event = True
-            return True
-        elif any(collision_hist):
+            done = True
+            return done, -100
+        elif len(collision_hist) > 0:
             print("COLLISION detected from sensor!!")
             self.collision_event = True
-            return True
+            done = True
+            return done, -100
+        elif len(self.lane_sensor.get_history()) > 0:
+            print("LANE INVASION!!")
+            self.invasion_event = True
+            done = True
+            return done, -100
         else:
-            return False
+            done = False
+            return done, 0
 
     def _collision_check(self, extension_factor=1, margin=0.9):
         """
@@ -248,10 +231,10 @@ class SimInit:
                 adversary_transform = adversary.get_transform()
                 adversary_loc = adversary_transform.location
                 adversary_yaw = adversary_transform.rotation.yaw
-                overlap_adversary = common.RotatedRectangle(
+                overlap_adversary = RotatedRectangle(
                     adversary_loc.x, adversary_loc.y,
                     2 * margin * adversary_bbox.extent.x, 2 * margin * adversary_bbox.extent.y, adversary_yaw)
-                overlap_actor = common.RotatedRectangle(
+                overlap_actor = RotatedRectangle(
                     actor_location.x, actor_location.y,
                     2 * margin * actor_bbox.extent.x * extension_factor, 2 * margin * actor_bbox.extent.y, actor_yaw)
                 overlap_area = overlap_adversary.intersection(overlap_actor).area
@@ -260,12 +243,12 @@ class SimInit:
                     break
         return is_hazard
 
-    def on_roadcentre(self):
-        actor = self.ego_car
-        ego_pos = self._map.get_waypoint(location=actor.get_location(), project_to_road=False).transform.location
-        lane_pos = self._map.get_waypoint(location=actor.get_location(), project_to_road=True).transform.location
-        dis = np.sqrt((ego_pos.x-lane_pos.x)**2+(ego_pos.y-lane_pos.y)**2)
-        return dis
+    # TODO
+    # def _lane_invasion_check(self, extension_factor=1, margin=1.15):
+    #     """
+    #     This function identifies if the vehicle is out of lane
+    #     """
+    #     return is_invasion
 
 
 

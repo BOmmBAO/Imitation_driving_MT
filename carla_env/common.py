@@ -9,7 +9,7 @@ def pi_2_pi(theta):
         if theta > math.pi:
             theta -= 2 * math.pi
 
-        if theta < -math.pi:
+        if theta <= -math.pi:
             theta += 2 * math.pi
 
     return theta

@@ -28,8 +28,8 @@ class CarlaEnv(gym.Env):
 
         self.sim = SimInit(args)
         self.car = VehicleInit(self.sim)
-        self.sigma = {"sigma_pos": 0.3, "sigma_vel_upper": 0.6,
-                       "sigma_vel_lower": 1.0, "sigma_yaw": 0.4}
+        self.sigma = {"sigma_pos": 1.3, "sigma_vel_upper": 0.6,
+                       "sigma_vel_lower": 1.0, "sigma_yaw": 1.4}
 
         obs_shape = len(self.car.fea_ext.observation)
         obs_high = np.array([np.inf] * obs_shape)
