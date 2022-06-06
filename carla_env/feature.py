@@ -94,7 +94,7 @@ class FeatureExt():
                     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
                     wp_l.extend(_lane.next_until_lane_end(d_s))
                     break
-                if len(wp_l) > max_sample:
+                if len(wp_l) >= max_sample:
                     break
             return wp_l
 
@@ -104,14 +104,14 @@ class FeatureExt():
             else:
                 return True
 
-        count = 100 / self.wp_ds
+        count = 70 / self.wp_ds
 
         if self.waypoints_buffer is None:
             _lane = self.map.get_waypoint(self.current_loc)
             self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
 
         # Find the nearest point in the waypoints buffer
-        nearest_dist, index = 100, 0
+        nearest_dist, index = 70, 0
         for i in range(len(self.waypoints_buffer)):
             pos = self.waypoints_buffer[i].transform.location
             _dist = np.hypot(pos.x - self.current_loc.x, pos.y - self.current_loc.y)
@@ -177,11 +177,10 @@ class FeatureExt():
 
     def exponential_index(self, horizon):
         exp_index = []
-        seq = 1
+        seq = 0
         while seq < horizon:
             exp_index.append(round(seq / self.wp_ds))
-            # seq *= self.distance_rate
-            seq += 5
+            seq += self.wp_ds
         return exp_index
 
     def find_road_border(self, wp_list):
@@ -191,8 +190,7 @@ class FeatureExt():
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                # seq *= self.distance_rate
-                seq += 1
+                seq += self.wp_ds
                 if seq > max_distance:
                     break
             while len(wp_l) < len(self.wp_index):
@@ -384,7 +382,7 @@ class FeatureExt():
             self.info_dict['ego_car_vel'] = self._rotate_car(v_world)
 
         else:
-            self.info_dict['ego_car_pos'] = [self.vehicle_info.x, self.vehicle_info.y]
+            self.info_dict['ego_car_pos'] = [vehicle.get_location().x, self.vehicle.get_location().y]
             self.info_dict['ego_car_vel'] = [vehicle.get_velocity().x, vehicle.get_velocity().y]
             self.info_dict['ego_car_acc'] = [vehicle.get_acceleration().x, vehicle.get_acceleration().y]
 
@@ -559,8 +557,9 @@ class FeatureExt():
 
 class VehicleInfo:
 
-    def __init__(self, vehicle):
+    def __init__(self, vehicle, des_vel=12):
         self.vehicle = vehicle
+        self.target_vel = des_vel
         self.dt = 0.1
 
         self.merge_length = 0
@@ -604,4 +603,11 @@ class VehicleInfo:
         self.roll = 0
         self.pitch = 0
 
-        self.merge_length = max(4 * self.v, 12)
+        self.merge_length = max(4 * self.v, self.target_vel
+
+
+
+
+
+
+                                )

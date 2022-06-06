@@ -44,12 +44,10 @@ class VehicleInit():
             steer=float(steer),
             brake=float(brake))
         self.ego_car.apply_control(act)
-        #print("preview_yaw", self.ego_car.get_transform().rotation.yaw)
         for _ in range(1):
             self.world.tick()
         self.last_action = current_action
         self.ego_car_config.fea_ext.update()
-        #print("post_yaw", self.ego_car.get_transform().rotation.yaw)
         #self.lead_car_config.fea_ext.update()
         #rx, ry, ryaw, s_sum = self.ego_car_config.path.following_path(self.fea_ext.cur_wp)
 
@@ -58,7 +56,7 @@ class VehicleInit():
         #self.lead_car_config.fea_ext.update()
         # is_wrong, self.reference = self.update_dec(decision[0], self.ego_car_config)
         # [rx, ry, ryaw, ref_vel] = self.reference
-        merge_dist, ref_vel = self.decode_decision(decision[0], self.ego_car_config)
+        merge_dist, ref_vel = self.decode_decision(decision, self.ego_car_config)
         try:
             rx, ry, ryaw, s_sum = self.ego_car_config.path.update(merge_dist)
             self.reference = [rx, ry, ryaw, ref_vel]
@@ -81,7 +79,7 @@ class VehicleInit():
         #self.lead_car = env.lead_car
         #self.lead_car_config = CarConfig(env, self.lead_car)
         self.ego_car_config.fea_ext.update()
-        self.last_action = np.array([0.0, 0.0])
+        self.last_action = np.array([1.0, 0.0])
         #self.lead_car_config.fea_ext.update()
 
 
@@ -164,5 +162,5 @@ class CarConfig():
         if decision:
             self.path = path_planner(env, self.fea_ext)
             self.dec_maker = RuleBased(self.fea_ext)
-            self.controller = PID_controller(self.fea_ext)
+            self.controller = PID_controller(self.fea_ext, car)
             # self.controller = MPC(self.fea_ext)

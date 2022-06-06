@@ -1,56 +1,30 @@
 import gym
-import numpy as np
-from trpo_mpi import TRPO
-from rl_algorithm.common.policies import MlpPolicy
-from rl_algorithm.common.noise import NormalActionNoise
-from carla_e2e import CarlaEnv
-import sys
-import argparse
-import wandb
 
-def run_evaluate_episodes(agent, env, eval_episodes):
-    avg_reward = 0.
-    for k in range(eval_episodes):
-        obs = env.reset()
-        done = False
-        steps = 0
-        while not done and steps < env._max_episode_steps:
-            steps += 1
-            action = agent.predict(obs)
-            obs, reward, done, _ = env.step(action)
-            avg_reward += reward
-    avg_reward /= eval_episodes
-    return avg_reward
+from rl_algorithm.common.policies import MlpPolicy
+from rl_algorithm.common import make_vec_env
+from rl_algorithm.ppo2 import PPO2
+from carla_e2e import CarlaEnv
+import argparse
 
 def main(load_model,ep_length, target_v, seed = 7):
-    env = CarlaEnv(ep_length, target_v)
-    try:
-        if load_model:
-            model = TRPO.load('trpo_e2e', env, action_noise = NormalActionNoise(mean=np.array([0.3, 0]), sigma=np.array([0.5, 0.1])))
-        else:
-            model = TRPO(MlpPolicy,
-                         env,
-                         verbose=0,
-                         seed = seed,
-                         tensorboard_log='./sem_trpo')
-        model.learn(total_timesteps=20000,
-                    log_interval=4,
-                    tb_log_name='trpo_e2e'
-                    )
-        model.save("trpo_e2e")
 
-        #del model  # remove to demonstrate saving and loading
-        if (total_steps + 1) // args.test_every_steps >= test_flag:
-            while (total_steps + 1) // args.test_every_steps >= test_flag:
-                test_flag += 1
-            avg_reward = run_evaluate_episodes(agent, eval_env, EVAL_EPISODES)
-            tensorboard.add_scalar('eval/episode_reward', avg_reward,
-                                   total_steps)
-            logger.info(
-                'Total steps {}, Evaluation over {} episodes, Average reward: {}'
-                    .format(total_steps, EVAL_EPISODES, avg_reward))
-    finally:
-        env.close()
+    # multiprocess environment
+    env = CarlaEnv(ep_length, target_v)
+
+    model = PPO2(MlpPolicy, env, verbose=0)
+    model.learn(total_timesteps=25000)
+    model.save("ppo2_carla")
+
+    del model # remove to demonstrate saving and loading
+
+    model = PPO2.load("ppo2_carla")
+
+    # Enjoy trained agent
+    obs = env.reset()
+    while True:
+        action, _states = model.predict(obs)
+        obs, rewards, dones, info = env.step(action)
+
 
 if __name__ == "__main__":
     params = {

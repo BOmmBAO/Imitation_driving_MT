@@ -1,3 +1,10 @@
+#!/usr/bin/env python
+
+# This file is modified by Dongjie yu (yudongjie.moon@foxmail.com)
+# from <https://github.com/cjy1992/gym-carla>:
+# Copyright (c) 2019:
+# authors: Jianyu Chen (jianyuchen@berkeley.edu).
+
 import math
 import numpy as np
 import carla

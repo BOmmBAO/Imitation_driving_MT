@@ -34,7 +34,7 @@ class SimInit:
 
         random.seed()
         self.spawn_points = self._map.get_spawn_points()
-        self.init_spawn_point = self.spawn_points[1]
+        self.init_spawn_point = self.spawn_points[5]
         self.spawn_points.remove(self.init_spawn_point)
 
         self.init()
@@ -49,7 +49,10 @@ class SimInit:
             x=self.desired_speed * np.cos(yaw),
             y=self.desired_speed * np.sin(yaw))
         self.ego_car.set_target_velocity(init_speed)
-        time.sleep(4)
+        self.world.tick()
+        self.world.tick()
+        # self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=1.0))
+        # time.sleep(4)
         #self.lead_car = self.add_lead_car(self.init_spawn_point)
         #self.zombie_cars = self.add_zombie_cars(self.spawn_points, 0)
         #self.zombie_cars.append(self.lead_car)
@@ -59,6 +62,7 @@ class SimInit:
         self.destroy()
         self.init()
         self._sensor()
+        #self.ego_car.apply_control(carla.VehicleControl(brake=0.0))
 
 
     def destroy(self):
@@ -192,17 +196,17 @@ class SimInit:
             print("COLLISION!!")
             self.collision_event = True
             done = True
-            return done, -100
+            return done, -10
         elif len(collision_hist) > 0:
             print("COLLISION detected from sensor!!")
             self.collision_event = True
             done = True
-            return done, -100
+            return done, -10
         elif len(self.lane_sensor.get_history()) > 0:
             print("LANE INVASION!!")
             self.invasion_event = True
             done = True
-            return done, -100
+            return done, -10
         else:
             done = False
             return done, 0

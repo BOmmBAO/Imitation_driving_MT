@@ -41,19 +41,16 @@ class CarlaEnv(gym.Env):
         argparser = argparse.ArgumentParser(description='Carla ArgParser practice')
         argparser.add_argument('--host', metavar='H', default='127.0.0.1', help='IP of the host server')
         argparser.add_argument('-p', '--port', default=2000, type=int, help='TCP port to listen to')
-        #argparser.add_argument('--repeat-action',default=5, type=int, help='number of steps to repeat each action')
-        #argparser.add_argument('--sync', action='store_true', help='Synchronous mode execution')
         args = argparser.parse_args()
         self.desired_speed = target_v
         self.steps = 0
-        self.total_steps = 200
+        self.total_steps = step_per_ep
         self.decision = False
-        self.step_per_ep = step_per_ep
         self.sim = SimInit(args, self.desired_speed)
         self.current_wpt = np.array((self.sim.current_wpt.transform.location.x, self.sim.current_wpt.transform.location.y, self.sim.current_wpt.transform.rotation.yaw))
         self.car = VehicleInit(self.sim, self.decision)
-        self.sigmas = {"sigma_pos": 0.03, "sigma_vel_upper": 0.16,
-                       "sigma_vel_lower": 0.5, "sigma_yaw": 0.14}
+        self.sigmas = {"sigma_pos": 0.3, "sigma_vel_upper": 0.6,
+                       "sigma_vel_lower": 1.0, "sigma_yaw": 0.4}
 
         obs_shape = len(self.car.fea_ext.observation)
         # if self.action_type == 'continuous':
@@ -83,7 +80,7 @@ class CarlaEnv(gym.Env):
             done, reward = self._get_reward()
         else:
             done = True
-            print('Time out! Eps cost %d steps:', self.step_per_ep)
+            print('Time out! Eps cost %d steps:', self.total_steps)
         ob = self._get_obs()
         print("Action:", action)
         print("Reward:", reward)
@@ -121,9 +118,10 @@ class CarlaEnv(gym.Env):
         if done:
             return done, reward
 
-        car_x, car_y, v_norm, car_yaw = self.car.fea_ext.vehicle_info.x, self.car.fea_ext.vehicle_info.y, \
-                                self.car.fea_ext.vehicle_info.v, self.car.fea_ext.vehicle_info.yaw
-        #lane_width = self.car.fea_ext.cur_lane_width/2
+        car_x, car_y, car_yaw = self.sim.ego_car.get_location().x, self.sim.ego_car.get_location().y, \
+                                        self.sim.ego_car.get_transform().rotation.yaw
+        lane_width = self.car.fea_ext.cur_lane_width/2
+        v_norm, acc_norm  = self._get_velocity()
         print(v_norm)
 
         # sigma_pos = 0.3
@@ -134,26 +132,27 @@ class CarlaEnv(gym.Env):
             np.sin(wpt_yaw / 180 * np.pi)
         ])
         pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
-        lateral_dist = np.linalg.norm(pos_err_vec) * np.sign(pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0])
-        track_rewd = np.exp(-lateral_dist**2 / (2 * (sigma_pos**2)))
-        print("process", track_rewd)
+        lateral_dist = np.linalg.norm(pos_err_vec) * np.sign(pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0])/lane_width
+        track_rewd = np.exp(-np.power(lateral_dist, 2) / 2 / sigma_pos / sigma_pos)
+        print("_track", track_rewd)
 
         # velocity reward
         sigma_vel_upper, sigma_vel_lower = self.sigmas["sigma_vel_upper"], self.sigmas["sigma_vel_lower"]
         sigma_vel = sigma_vel_upper if v_norm <= self.desired_speed else sigma_vel_lower
         delta_speed = v_norm - self.desired_speed
-        v_rewd = np.exp(-delta_speed ** 2 / (2 * (sigma_vel ** 2)))
-        print("process", delta_speed)
+        v_rewd = np.exp(-np.power(delta_speed, 2) / 2 / sigma_vel / sigma_vel)
+        print("_speed", delta_speed)
 
         # angle reward
         sigma_yaw = self.sigmas["sigma_yaw"]
         yaw_err = delta_yaw * np.pi / 180
-        ang_rewd = np.exp(-yaw_err**2 / (2 / (sigma_yaw ** 2)))
-        print("process", ang_rewd)
+        ang_rewd = np.exp(-np.power(yaw_err, 2) / 2 / sigma_yaw / sigma_yaw)
 
-        if abs(lateral_dist) > 1.2:
+        print("_ang", ang_rewd)
+
+        if abs(lateral_dist) > 1.25:
             done = True
-            reward = -100
+            reward = -10
             return done, reward
 
         reward = track_rewd * v_rewd * ang_rewd
@@ -167,14 +166,14 @@ class CarlaEnv(gym.Env):
         """
         calculate the delta yaw between ego and current waypoint
         """
-        current_wpt = self.sim._map.get_waypoint(location=self.car.fea_ext.vehicle_info._location)
+        current_wpt = self.sim._map.get_waypoint(location=self.sim.ego_car.get_location())
         if not current_wpt:
             self.logger.error('Fail to find a waypoint')
             wpt_yaw = self.current_wpt[2] % 360
         else:
             wpt_yaw = current_wpt.transform.rotation.yaw % 360
             self.current_wpt = np.array((current_wpt.transform.location.x, current_wpt.transform.location.y, current_wpt.transform.rotation.yaw))
-        ego_yaw = self.car.fea_ext.vehicle_info.yaw % 360
+        ego_yaw = self.sim.ego_car.get_transform().rotation.yaw % 360
 
         delta_yaw = ego_yaw - wpt_yaw
         if 180 <= delta_yaw and delta_yaw <= 360:
@@ -183,6 +182,14 @@ class CarlaEnv(gym.Env):
             delta_yaw += 360
 
         return delta_yaw, wpt_yaw
+    def _get_velocity(self):
+        _v = self.sim.ego_car.get_velocity()
+        ego_velocity = np.array([_v.x, _v.y])
+        _acc = self.sim.ego_car.get_acceleration()
+        ego_acc = np.array([_acc.x, _acc.y])
+        v = np.linalg.norm(ego_velocity)
+        acc = np.linalg.norm(ego_acc)
+        return v, acc
 
 
 
