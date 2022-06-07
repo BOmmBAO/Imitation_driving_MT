@@ -23,9 +23,8 @@ class VehicleInit():
 
         self.ego_car_config.fea_ext.update()
         self.last_action = np.array([1.0, 0.0])
-        self.velocity_buffer = []
         #self.lead_car_config.fea_ext.update()
-        #self.reference = None
+        self.reference = None
 
     def step_action(self, action):
         current_action = np.array(action) + self.last_action
@@ -82,6 +81,7 @@ class VehicleInit():
         self.ego_car_config.fea_ext.update()
         self.last_action = np.array([1.0, 0.0])
         #self.lead_car_config.fea_ext.update()
+        self.reference = None
 
 
     def rule_based_step(self):
