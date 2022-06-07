@@ -1,58 +1,23 @@
-#!/usr/bin/env python3
-import numpy as np
 import gym
 
-from rl_algorithm.common.cmd_util import mujoco_arg_parser
-from rl_algorithm import bench, logger
-from rl_algorithm.common import set_global_seeds
-from rl_algorithm.common.vec_env.vec_normalize import VecNormalize
-from rl_algorithm.ppo2 import PPO2
 from rl_algorithm.common.policies import MlpPolicy
-from rl_algorithm.common.vec_env.dummy_vec_env import DummyVecEnv
+from rl_algorithm.common import make_vec_env
+from rl_algorithm.ppo2 import PPO2
 
+# multiprocess environment
+env = make_vec_env('CartPole-v1', n_envs=4)
 
-def train(env_id, num_timesteps, seed):
-    """
-    Train PPO2 model for Mujoco environment, for testing purposes
+model = PPO2(MlpPolicy, env, verbose=1)
+model.learn(total_timesteps=25000)
+model.save("ppo2_cartpole")
 
-    :param env_id: (str) the environment id string
-    :param num_timesteps: (int) the number of timesteps to run
-    :param seed: (int) Used to seed the random generator.
-    """
-    def make_env():
-        env_out = gym.make(env_id)
-        env_out = bench.Monitor(env_out, logger.get_dir(), allow_early_resets=True)
-        return env_out
+del model # remove to demonstrate saving and loading
 
-    env = DummyVecEnv([make_env])
-    env = VecNormalize(env)
+model = PPO2.load("ppo2_cartpole")
 
-    set_global_seeds(seed)
-    policy = MlpPolicy
-    model = PPO2(policy=policy, env=env, n_steps=2048, nminibatches=32, lam=0.95, gamma=0.99, noptepochs=10,
-                 ent_coef=0.0, learning_rate=3e-4, cliprange=0.2)
-    model.learn(total_timesteps=num_timesteps)
-
-    return model, env
-
-
-def main():
-    """
-    Runs the test
-    """
-    args = mujoco_arg_parser().parse_args()
-    logger.configure()
-    model, env = train(args.env, num_timesteps=args.num_timesteps, seed=args.seed)
-
-    if args.play:
-        logger.log("Running trained model")
-        obs = np.zeros((env.num_envs,) + env.observation_space.shape)
-        obs[:] = env.reset()
-        while True:
-            actions = model.step(obs)[0]
-            obs[:] = env.step(actions)[0]
-            env.render()
-
-
-if __name__ == '__main__':
-    main()
+# Enjoy trained agent
+obs = env.reset()
+while True:
+    action, _states = model.predict(obs)
+    obs, rewards, dones, info = env.step(action)
+    env.render()

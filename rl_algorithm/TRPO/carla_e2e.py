@@ -152,8 +152,6 @@ class CarlaEnv(gym.Env):
 
         if abs(lateral_dist) > 1.25:
             done = True
-            reward = -10
-            return done, reward
 
         reward = track_rewd * v_rewd * ang_rewd
         #self.ep_len +=1

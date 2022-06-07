@@ -47,6 +47,7 @@ class CarlaEnv(gym.Env):
         self.action_space = spaces.Discrete(5)
     def step(self, decision):
         self.decision = decision
+        reward = 0
         if self.steps < self.total_steps:
 
             total_step = 5 if decision == 0 else 3
@@ -66,7 +67,7 @@ class CarlaEnv(gym.Env):
                     break
         else:
             done = True
-            print('Time out! Eps cost %d steps:', self.step_per_ep)
+            print('Time out! Eps cost %d steps:', self.total_steps)
         ob = self._get_obs()
         print("Reward:", reward)
         print("DONE?", done)
@@ -89,9 +90,10 @@ class CarlaEnv(gym.Env):
         if done:
             return done, reward
 
-        car_x, car_y, v_norm, car_yaw = self.car.fea_ext.vehicle_info.x, self.car.fea_ext.vehicle_info.y, \
-                                        self.car.fea_ext.vehicle_info.v, self.car.fea_ext.vehicle_info.yaw
+        car_x, car_y, car_yaw = self.sim.ego_car.get_location().x, self.sim.ego_car.get_location().y, \
+                                self.sim.ego_car.get_transform().rotation.yaw
         lane_width = self.car.fea_ext.cur_lane_width / 2
+        v_norm, acc_norm = self._get_velocity()
         print(v_norm)
 
         # sigma_pos = 0.3
@@ -105,21 +107,21 @@ class CarlaEnv(gym.Env):
         lateral_dist = np.linalg.norm(pos_err_vec) * np.sign(
             pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]) / lane_width
         track_rewd = np.exp(-np.power(lateral_dist, 2) / 2 / sigma_pos / sigma_pos)
-        print("process", track_rewd)
+        print("_track", track_rewd)
 
         # velocity reward
         sigma_vel_upper, sigma_vel_lower = self.sigmas["sigma_vel_upper"], self.sigmas["sigma_vel_lower"]
         sigma_vel = sigma_vel_upper if v_norm <= self.desired_speed else sigma_vel_lower
         delta_speed = v_norm - self.desired_speed
         v_rewd = np.exp(-np.power(delta_speed, 2) / 2 / sigma_vel / sigma_vel)
-        print("process", delta_speed)
+        print("_speed", delta_speed)
 
         # angle reward
         sigma_yaw = self.sigmas["sigma_yaw"]
         yaw_err = delta_yaw * np.pi / 180
         ang_rewd = np.exp(-np.power(yaw_err, 2) / 2 / sigma_yaw / sigma_yaw)
 
-        print("process", ang_rewd)
+        print("_ang", ang_rewd)
 
         if abs(lateral_dist) > 1.25:
             done = True
@@ -152,4 +154,11 @@ class CarlaEnv(gym.Env):
             delta_yaw += 360
 
         return delta_yaw, wpt_yaw
-
+    def _get_velocity(self):
+        _v = self.sim.ego_car.get_velocity()
+        ego_velocity = np.array([_v.x, _v.y])
+        _acc = self.sim.ego_car.get_acceleration()
+        ego_acc = np.array([_acc.x, _acc.y])
+        v = np.linalg.norm(ego_velocity)
+        acc = np.linalg.norm(ego_acc)
+        return v, acc

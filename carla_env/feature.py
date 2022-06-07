@@ -4,7 +4,7 @@ import numpy as np
 from carla_env import common
 import matplotlib.pyplot as plt
 plt.ion()
-
+from misc import _vec_decompose
 
 class STATUS:
 
@@ -373,31 +373,31 @@ class FeatureExt():
 
 
     def ext_egocar_info(self, vehicle, local_frame):
-        if local_frame:
-            v_world = [vehicle.get_velocity().x, vehicle.get_velocity().y]
-            self.info_dict['ego_car_world_trans'] = [self.vehicle_info.x,
-                                                     self.vehicle_info.y,
-                                                     self.vehicle_info.yaw]
-            self.info_dict['ego_car_local_trans'] = [0, 0, 0]
-            self.info_dict['ego_car_vel'] = self._rotate_car(v_world)
+        ego_heading = np.float32(vehicle.get_transform().rotation.yaw / 180.0 * np.pi)
+        ego_heading_vec = np.array((np.cos(ego_heading),
+                                    np.sin(ego_heading)))
+        v_world = [vehicle.get_velocity().x, vehicle.get_velocity().y]
+        v_t_absolute = np.array(v_world)
+        a_t_absolute = np.array([vehicle.get_acceleration().x, vehicle.get_acceleration().x.y])
+        v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
+        a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
-        else:
-            self.info_dict['ego_car_pos'] = [vehicle.get_location().x, self.vehicle.get_location().y]
-            self.info_dict['ego_car_vel'] = [vehicle.get_velocity().x, vehicle.get_velocity().y]
-            self.info_dict['ego_car_acc'] = [vehicle.get_acceleration().x, vehicle.get_acceleration().y]
+        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, self.vehicle.get_location().y]
+        self.info_dict['ego_car_vel'] = [v_la, v_lon]
+        self.info_dict['ego_car_acc'] = [a_la, a_lon]
 
     def ext_zombiecars_info(self, local_frame, total_cars=6):
 
         def _get_v_car(vehicle):
             v_world = [vehicle.get_velocity().x, vehicle.get_velocity().y]
             v_car = self._rotate_car(v_world)
-            return v_car if local_frame else v_world
+            return v_car
 
         def get_car_pos(vehicle):
             ego_pos = [self.current_loc.x, self.current_loc.y]
             zom_pos_world = [vehicle.get_transform().location.x, vehicle.get_transform().location.y]
             zom_pos = self._transform_car(ego_pos, zom_pos_world)
-            return zom_pos if local_frame else ego_pos
+            return zom_pos
 
         vehicles_bounding_box, vehicles_pos, vehicles_v, vehicles_acc = [], [], [], []
         for car in self.visible_zombie_cars:
