@@ -23,6 +23,7 @@ class VehicleInit():
 
         self.ego_car_config.fea_ext.update()
         self.last_action = np.array([1.0, 0.0])
+        self.velocity_buffer = []
         #self.lead_car_config.fea_ext.update()
         #self.reference = None
 

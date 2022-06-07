@@ -5,7 +5,7 @@ import os
 from rl_algorithm.TRPO.carla_e2e import CarlaEnv
 from carla_env.fplot import FeaPlot
 import matplotlib.pyplot as plt
-from utils.common import *
+from carla_env.common import *
 import pandas as pd
 from numpy import genfromtxt
 

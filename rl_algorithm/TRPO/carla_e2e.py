@@ -1,23 +1,5 @@
 
 from __future__ import division
-import copy
-import numpy as np
-import random
-import time
-from collections import deque
-
-import gym
-from gym import spaces
-from carla_env.modules import CollisionSensor, LaneInvasionSensor
-
-from carla_env.coordinates import train_coordinates
-from carla_env.misc import _vec_decompose, delta_angle_between
-from carla_env.carla_logger import *
-from carla_env.feature import *
-from carla_env.fplot import FeaPlot
-
-
-
 import gym
 from gym import spaces
 import random
@@ -59,6 +41,7 @@ class CarlaEnv(gym.Env):
         #act_high = np.array([1., 1.]) # thre, steer: [-1, 1]
         self.action_space = gym.spaces.Box(-1., 1., shape=(2,), dtype='float32')
         self.obs_index = self.car.fea_ext.obs_index
+
 
         self.fea_plot = FeaPlot(self.car.fea_ext)
         #added from modulardecision
@@ -150,7 +133,7 @@ class CarlaEnv(gym.Env):
 
         print("_ang", ang_rewd)
 
-        if abs(lateral_dist) > 1.25:
+        if abs(lateral_dist) > 1.2:
             done = True
 
         reward = track_rewd * v_rewd * ang_rewd

@@ -5,6 +5,7 @@ import numpy as np
 from carla_env.common import *
 from absl import logging
 import time
+from collections import deque
 
 
 class SimInit:
@@ -41,6 +42,7 @@ class SimInit:
         self._sensor()
 
     def init(self):
+        self.velocity_buffer = deque([], maxlen=5)
         self.add_ego_car(self.init_spawn_point)
         self.current_wpt = self._map.get_waypoint(location=self.ego_car.get_location())
         #self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=1.0))
@@ -81,6 +83,7 @@ class SimInit:
         self.world.tick()
         #self._visible_zombie_cars_filter()
         self._spec_update()
+
 
     def _spec_update(self):
         current_loc = self.ego_car.get_transform().location
@@ -191,24 +194,31 @@ class SimInit:
 
     def terminal_check(self):
         collision_hist = self.collision_sensor.get_history()
-
+        done = False
+        terminal =False
         if self._collision_check():
             print("COLLISION!!")
             self.collision_event = True
             done = True
+            terminal = True
             return done, -10
         elif len(collision_hist) > 0:
             print("COLLISION detected from sensor!!")
             self.collision_event = True
             done = True
+            terminal = True
             return done, -10
         elif len(self.lane_sensor.get_history()) > 0:
             print("LANE INVASION!!")
             self.invasion_event = True
             done = True
-            return done, -10
+            terminal = True
+            return done, 0
+        elif self._detect_reset():
+            done = True
+            terminal = True
+            return done, 0
         else:
-            done = False
             return done, 0
 
     def _collision_check(self, extension_factor=1, margin=0.9):
@@ -246,6 +256,21 @@ class SimInit:
                     is_hazard = True
                     break
         return is_hazard
+    def _get_velocity(self):
+        _v = self.ego_car.get_velocity()
+        ego_velocity = np.array([_v.x, _v.y])
+        v = np.linalg.norm(ego_velocity)
+        return v
+
+    def _detect_reset(self):
+        def _dis(a, b):
+            return ((b[1]-a[1])**2 + (b[0]-a[0])**2) ** 0.5
+        v_norm_mean = np.mean(self.velocity_buffer)
+        if len(self.velocity_buffer) == 5:
+            if v_norm_mean < 4 or v_norm_mean > 12:
+                return True
+        return False
+
 
     # TODO
     # def _lane_invasion_check(self, extension_factor=1, margin=1.15):

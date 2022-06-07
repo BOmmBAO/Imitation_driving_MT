@@ -4,7 +4,7 @@ import numpy as np
 from carla_env import common
 import matplotlib.pyplot as plt
 plt.ion()
-from misc import _vec_decompose
+from carla_env.misc import _vec_decompose
 
 class STATUS:
 
@@ -36,7 +36,7 @@ class FeatureExt():
 
         self.waypoints_buffer = None
         self.waypoints_buffer_lane_id = None
-        self.wp_ds = 0.5
+        self.wp_ds = 2
         self.wp_horizon = 70
         self.distance_rate = 1.4
         self.wp_index = self.exponential_index(horizon=70)
@@ -186,7 +186,7 @@ class FeatureExt():
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            seq = 0.5
+            seq = 1.0
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
@@ -378,7 +378,7 @@ class FeatureExt():
                                     np.sin(ego_heading)))
         v_world = [vehicle.get_velocity().x, vehicle.get_velocity().y]
         v_t_absolute = np.array(v_world)
-        a_t_absolute = np.array([vehicle.get_acceleration().x, vehicle.get_acceleration().x.y])
+        a_t_absolute = np.array([vehicle.get_acceleration().x, vehicle.get_acceleration().y])
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
         a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
