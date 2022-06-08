@@ -22,21 +22,27 @@ class VehicleInit():
         self.fea_ext = self.ego_car_config.fea_ext
 
         self.ego_car_config.fea_ext.update()
-        self.last_action = np.array([1.0, 0.0])
+        self.steer = 0.0
+        self.throttle_or_break = 0.0
         #self.lead_car_config.fea_ext.update()
         self.reference = None
 
     def step_action(self, action):
-        current_action = np.array(action) + self.last_action
-        current_action = np.clip(
-            current_action, -1.0, 1.0, dtype=np.float32)
-        throttle_or_brake, steer = current_action
+        max_steer = self.env.delta_time / 1.5
+        max_throttle = self.env.delta_time / 0.2
+        throttle_or_brake, steer = action[0], action[1]
+        time_throttle = np.clip(throttle_or_brake, -max_throttle, max_throttle)
+        time_steer = np.clip(steer, -max_steer, max_steer)
+        steer = np.clip(time_steer + self.steer, -1.0, 1.0)
+        throttle_or_brake = np.clip(time_throttle + self.throttle_or_break, -1.0, 1.0)
+        self.steer = steer
+        self.throttle_or_break = throttle_or_brake
         if throttle_or_brake >= 0:
-            throttle = throttle_or_brake
+            throttle = np.clip(throttle_or_brake, 0, 1)
             brake = 0
         else:
             throttle = 0
-            brake = -throttle_or_brake
+            brake = 1
 
             # Apply control
         act = carla.VehicleControl(
@@ -46,7 +52,6 @@ class VehicleInit():
         self.ego_car.apply_control(act)
         for _ in range(1):
             self.world.tick()
-        self.last_action = current_action
         self.ego_car_config.fea_ext.update()
         #self.lead_car_config.fea_ext.update()
         #rx, ry, ryaw, s_sum = self.ego_car_config.path.following_path(self.fea_ext.cur_wp)
@@ -79,7 +84,7 @@ class VehicleInit():
         #self.lead_car = env.lead_car
         #self.lead_car_config = CarConfig(env, self.lead_car)
         self.ego_car_config.fea_ext.update()
-        self.last_action = np.array([1.0, 0.0])
+        self.last_action = np.array([0.0, 0.0])
         #self.lead_car_config.fea_ext.update()
         self.reference = None
 
@@ -163,5 +168,5 @@ class CarConfig():
         if decision:
             self.path = path_planner(env, self.fea_ext)
             self.dec_maker = RuleBased(self.fea_ext)
-            self.controller = PID_controller(self.fea_ext, car)
+            self.controller = PID_controller(self.fea_ext)
             # self.controller = MPC(self.fea_ext)

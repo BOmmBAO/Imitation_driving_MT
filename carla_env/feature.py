@@ -32,7 +32,7 @@ class FeatureExt():
         self.cur_wp = None
         self.wp_list = None
         self.current_loc = None
-        self.dt = env.dt
+        self.dt = env.delta_time
 
         self.waypoints_buffer = None
         self.waypoints_buffer_lane_id = None
@@ -42,7 +42,7 @@ class FeatureExt():
         self.wp_index = self.exponential_index(horizon=70)
 
         self.visible_zombie_cars = env.visible_zombie_cars
-        self.show_dt = self.dt * 1.5
+        self.show_dt = 0.2
         self.is_junction = False
 
         self.stop_sign = False
@@ -84,15 +84,15 @@ class FeatureExt():
     def waypoints_buffer_update(self):
 
         def uniform_wps(wp, d_s, max_sample):
-            seq = d_s
+            seq = 2.0
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += d_s
+                seq += 2
 
                 if wp_l[-1].is_junction:
                     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
-                    wp_l.extend(_lane.next_until_lane_end(d_s))
+                    wp_l.extend(_lane.next_until_lane_end(2.0))
                     break
                 if len(wp_l) >= max_sample:
                     break
@@ -104,7 +104,7 @@ class FeatureExt():
             else:
                 return True
 
-        count = 70 / self.wp_ds
+        count = 100
 
         if self.waypoints_buffer is None:
             _lane = self.map.get_waypoint(self.current_loc)
@@ -177,20 +177,20 @@ class FeatureExt():
 
     def exponential_index(self, horizon):
         exp_index = []
-        seq = 0
+        seq = 0.0
         while seq < horizon:
-            exp_index.append(round(seq / self.wp_ds))
-            seq += self.wp_ds
+            exp_index.append(round(seq/2.0))
+            seq += 2.0
         return exp_index
 
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            seq = 1.0
+            seq = 2.0
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += self.wp_ds
+                seq += 2.0
                 if seq > max_distance:
                     break
             while len(wp_l) < len(self.wp_index):
@@ -244,6 +244,8 @@ class FeatureExt():
     # -- Features used in Rule-based Decision---------------------------------------
     # ==============================================================================
     def find_lead_car(self):
+        if self.zombie_cars is None:
+            return None
         forward_cars = []
         ego_pos = [self.vehicle.get_location().x, self.vehicle.get_location().y]
         ego_dir = self.vehicle.get_physics_control().wheels[0].position - \
@@ -385,6 +387,7 @@ class FeatureExt():
         self.info_dict['ego_car_pos'] = [vehicle.get_location().x, self.vehicle.get_location().y]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
+        self.info_dict['ego_car_yaw'] = [ego_heading]
 
     def ext_zombiecars_info(self, local_frame, total_cars=6):
 

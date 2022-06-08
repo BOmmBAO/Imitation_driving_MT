@@ -14,15 +14,15 @@ class SimInit:
         self.client = carla.Client(args.host, args.port)
         self.client.set_timeout(10.0)
         self.desired_speed = desired_speed
-        self.dt = 0.05
+        self.delta_time = 0.05
 
-        self.world = self.client.load_world('Town03')
+        self.world = self.client.load_world('Town04')
         self._map = self.world.get_map()
         self.world.freeze_all_traffic_lights(True)
 
         self.original_settings = self.world.get_settings()
         settings = self.world.get_settings()
-        settings.fixed_delta_seconds = self.dt
+        settings.fixed_delta_seconds = self.delta_time
         settings.synchronous_mode = True
         self.world.apply_settings(settings)
 
@@ -35,7 +35,7 @@ class SimInit:
 
         random.seed()
         self.spawn_points = self._map.get_spawn_points()
-        self.init_spawn_point = self.spawn_points[5]
+        self.init_spawn_point = self.spawn_points[1]
         self.spawn_points.remove(self.init_spawn_point)
 
         self.init()
@@ -51,7 +51,6 @@ class SimInit:
             x=self.desired_speed * np.cos(yaw),
             y=self.desired_speed * np.sin(yaw))
         self.ego_car.set_target_velocity(init_speed)
-        self.world.tick()
         self.world.tick()
         # self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=1.0))
         # time.sleep(4)
@@ -195,28 +194,18 @@ class SimInit:
     def terminal_check(self):
         collision_hist = self.collision_sensor.get_history()
         done = False
-        terminal =False
         if self._collision_check():
             print("COLLISION!!")
             self.collision_event = True
             done = True
-            terminal = True
             return done, -10
         elif len(collision_hist) > 0:
             print("COLLISION detected from sensor!!")
             self.collision_event = True
             done = True
-            terminal = True
             return done, -10
-        elif len(self.lane_sensor.get_history()) > 0:
-            print("LANE INVASION!!")
-            self.invasion_event = True
-            done = True
-            terminal = True
-            return done, 0
         elif self._detect_reset():
             done = True
-            terminal = True
             return done, 0
         else:
             return done, 0
@@ -228,6 +217,8 @@ class SimInit:
         # world = CarlaDataProvider.get_world()
         actor = self.ego_car
         world_actors = self.visible_zombie_cars
+        if world_actors is None:
+            return False
         actor_bbox = actor.bounding_box
         actor_transform = actor.get_transform()
         actor_location = actor_transform.location
