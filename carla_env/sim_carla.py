@@ -16,7 +16,7 @@ class SimInit:
         self.desired_speed = desired_speed
         self.delta_time = 0.05
 
-        self.world = self.client.load_world('Town04')
+        self.world = self.client.load_world('Town03')
         self._map = self.world.get_map()
         self.world.freeze_all_traffic_lights(True)
 
@@ -42,6 +42,7 @@ class SimInit:
         self._sensor()
 
     def init(self):
+        #self.location_buffer = deque([], maxlen=5)
         self.velocity_buffer = deque([], maxlen=5)
         self.add_ego_car(self.init_spawn_point)
         self.current_wpt = self._map.get_waypoint(location=self.ego_car.get_location())
@@ -81,6 +82,7 @@ class SimInit:
     def update(self):
         self.world.tick()
         #self._visible_zombie_cars_filter()
+        self.velocity_buffer.append(self._get_velocity())
         self._spec_update()
 
 
@@ -258,7 +260,7 @@ class SimInit:
             return ((b[1]-a[1])**2 + (b[0]-a[0])**2) ** 0.5
         v_norm_mean = np.mean(self.velocity_buffer)
         if len(self.velocity_buffer) == 5:
-            if v_norm_mean < 4 or v_norm_mean > 12:
+            if v_norm_mean < 4 or v_norm_mean > 10 :
                 return True
         return False
 

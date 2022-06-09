@@ -12,7 +12,7 @@ def main(load_model,ep_length, target_v, seed = 7):
     env = CarlaEnv(ep_length, target_v)
 
     model = PPO2(MlpPolicy, env, verbose=0)
-    model.learn(total_timesteps=25000)
+    model.learn(total_timesteps=250000)
     model.save("ppo2_carla")
 
     del model # remove to demonstrate saving and loading
@@ -51,8 +51,8 @@ if __name__ == "__main__":
     parser.add_argument('--load', default=False, type=bool, help='whether to load existing model')
     #parser.add_argument('--map', type=str, default='Town03', help='name of carla map')
     parser.add_argument('--repeat-action', default=1, type=int, help='number of steps to repeat each action')
-    parser.add_argument('--episode-length', default=250, type=int, help='maximum number of steps per episode')
-    parser.add_argument('--target_v', default=12, type=int, help='desired velocity')
+    parser.add_argument('--episode-length', default=400, type=int, help='maximum number of steps per episode')
+    parser.add_argument('--target_v', default=6, type=int, help='desired velocity')
     parser.add_argument('--seed', type=int, default=7, help='random seed for initialization')
 
     args = parser.parse_args()

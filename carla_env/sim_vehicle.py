@@ -83,8 +83,9 @@ class VehicleInit():
         self.ego_car_config = CarConfig(env, self.ego_car,self.decision)
         #self.lead_car = env.lead_car
         #self.lead_car_config = CarConfig(env, self.lead_car)
+        self.steer = 0.0
+        self.throttle_or_break = 0.0
         self.ego_car_config.fea_ext.update()
-        self.last_action = np.array([0.0, 0.0])
         #self.lead_car_config.fea_ext.update()
         self.reference = None
 

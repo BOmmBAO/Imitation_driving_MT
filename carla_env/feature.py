@@ -24,7 +24,7 @@ class FeatureExt():
         self.traffic_light_flag = None
         self.world = env.world
         self.vehicle = vehicle
-        self.vehicle_info = VehicleInfo(vehicle)
+        self.vehicle_info = VehicleInfo(vehicle, env.desired_speed)
         self.map = env._map
         self.zombie_cars = env.zombie_cars
         self.cur_lane = None
@@ -179,7 +179,7 @@ class FeatureExt():
         return wp_l
 
     def exponential_index(self, horizon):
-        exp_index = [0]
+        exp_index = []
         time = 0
         seq = 1.4
         while seq <= horizon:
@@ -191,13 +191,16 @@ class FeatureExt():
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            seq = 1.0
-            wp_l = []
-            while True:
-                wp_l.append(wp.next(seq)[0])
-                seq *= 1.4
-                if seq > max_distance:
-                    break
+            # seq = 1.0
+            # wp_l = []
+            # while True:
+            #     wp_l.append(wp.next(seq)[0])
+            #     seq *= 1.4
+            #     if seq > max_distance:
+            #         break
+            wp_l = [wp.next(1)[0], wp.next(2)[0], wp.next(3)[0], wp.next(4)[0], \
+                   wp.next(6)[0], wp.next(8)[0], wp.next(11)[0], wp.next(15)[0], \
+                   wp.next(21)[0], wp.next(29)[0], wp.next(41)[0], wp.next(57)[0]]
             while len(wp_l) < len(self.wp_index):
                 print("The number of waypoints is wrong!")
                 wp_l.append(wp_l[-1])
@@ -393,7 +396,7 @@ class FeatureExt():
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
         self.info_dict['ego_car_yaw'] = [ego_heading]
-        print('box', self.vehicle.bounding_box)
+        #print('box', self.vehicle.bounding_box)
 
     def ext_zombiecars_info(self, local_frame, total_cars=6):
 
@@ -452,7 +455,8 @@ class FeatureExt():
         self.info_dict['inner_line_left'] = _to_vector(ego_pos, inner_line_l)
         self.info_dict['outer_line_right'] = _to_vector(ego_pos, outer_line_r)
         self.info_dict['outer_line_left'] = _to_vector(ego_pos, outer_line_l)
-
+        # print('inner',len(self.info_dict['inner_line_right']))
+        # print('outer',len(self.info_dict['outer_line_right']))
     def a2r(self, angle):
         return angle / 180 * np.pi
 
@@ -566,9 +570,9 @@ class FeatureExt():
 
 class VehicleInfo:
 
-    def __init__(self, vehicle, des_vel=12):
+    def __init__(self, vehicle, desired_v):
         self.vehicle = vehicle
-        self.target_vel = des_vel
+        self.target_vel = desired_v
         self.dt = 0.1
 
         self.merge_length = 0

@@ -25,6 +25,7 @@ class CarlaEnv(gym.Env):
         argparser.add_argument('-p', '--port', default=2000, type=int, help='TCP port to listen to')
         args = argparser.parse_args()
         self.desired_speed = target_v
+        self.total = 0
         self.steps = 0
         self.total_steps = step_per_ep
         self.decision = False
@@ -56,19 +57,22 @@ class CarlaEnv(gym.Env):
 
     def step(self, action):
         reward = 0
+        self.total += 1
         if self.steps < self.total_steps:
             self.steps +=1
             self.car.step_action(action)
             self.sim.update()
             done, reward = self._get_reward()
         else:
+            self.steps = 0
             done = True
             print('Time out! Eps cost %d steps:', self.total_steps)
         ob = self._get_obs()
-        print("Action:", action)
+        #print("Action:", action)
+        print("sum:", self.total)
         print("Reward:", reward)
         print("DONE?", done)
-        print(len(ob))
+        #print(len(ob))
         return ob, reward, done, {}
 
     #reset environment for new episode
@@ -133,7 +137,7 @@ class CarlaEnv(gym.Env):
 
         print("_ang", ang_rewd)
 
-        if abs(lateral_dist) > 1.2:
+        if abs(lateral_dist) > 0.9:
             done = True
 
         reward = track_rewd * v_rewd * ang_rewd
