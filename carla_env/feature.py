@@ -84,15 +84,15 @@ class FeatureExt():
     def waypoints_buffer_update(self):
 
         def uniform_wps(wp, d_s, max_sample):
-            seq = 2.0
+            seq = 1.0
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += 2
+                seq += 1.0
 
                 if wp_l[-1].is_junction:
                     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
-                    wp_l.extend(_lane.next_until_lane_end(2.0))
+                    wp_l.extend(_lane.next_until_lane_end(1.0))
                     break
                 if len(wp_l) >= max_sample:
                     break
@@ -130,11 +130,14 @@ class FeatureExt():
             self.waypoints_buffer.extend(uniform_wps(_lane, self.wp_ds,
                                                      count - len(self.waypoints_buffer)))
 
-    def expon_down_sample(self):
-        wp = []
-        for index in self.wp_index:
-            if index < len(self.waypoints_buffer):
-                wp.append(self.waypoints_buffer[index])
+    def expon_down_sample(self):# extract points with rate 1.4
+        wp_list = self.waypoints_buffer
+        wp = [wp_list[0], wp_list[1], wp_list[2], wp_list[3], \
+              wp_list[5], wp_list[7], wp_list[10], wp_list[14], \
+              wp_list[20], wp_list[28], wp_list[40], wp_list[56]]
+        # for index in self.wp_index[1:]:
+        #     if index < len(self.waypoints_buffer):
+        #         wp.append(self.waypoints_buffer[index])
         while len(wp) < len(self.wp_index):
             print("The number of waypoints is wrong!")
             wp.append(wp[-1])
@@ -176,21 +179,23 @@ class FeatureExt():
         return wp_l
 
     def exponential_index(self, horizon):
-        exp_index = []
-        seq = 0.0
-        while seq < horizon:
-            exp_index.append(round(seq/2.0))
-            seq += 2.0
+        exp_index = [0]
+        time = 0
+        seq = 1.4
+        while seq <= horizon:
+            exp_index.append(time)
+            seq *= 1.4
+            time += 1
         return exp_index
 
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            seq = 2.0
+            seq = 1.0
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += 2.0
+                seq *= 1.4
                 if seq > max_distance:
                     break
             while len(wp_l) < len(self.wp_index):
@@ -384,10 +389,11 @@ class FeatureExt():
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
         a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
-        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, self.vehicle.get_location().y]
+        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
         self.info_dict['ego_car_yaw'] = [ego_heading]
+        print('box', self.vehicle.bounding_box)
 
     def ext_zombiecars_info(self, local_frame, total_cars=6):
 

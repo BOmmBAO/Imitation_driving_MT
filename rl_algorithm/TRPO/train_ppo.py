@@ -3,7 +3,7 @@ import gym
 from rl_algorithm.common.policies import MlpPolicy
 from rl_algorithm.common import make_vec_env
 from rl_algorithm.ppo2 import PPO2
-from carla_decision import CarlaEnv
+from carla_e2e import CarlaEnv
 import argparse
 
 def main(load_model,ep_length, target_v, seed = 7):
