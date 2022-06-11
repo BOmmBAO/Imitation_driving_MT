@@ -42,7 +42,7 @@ def command2Vector(command):
     return command_vec
 
 
-def _vec_decompose(vec_to_be_decomposed, direction):
+def vec_decompose(vec_to_be_decomposed, direction):
     """
     Decompose the vector along the direction vec
     params:
