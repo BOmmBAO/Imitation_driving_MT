@@ -166,8 +166,3 @@ class VehicleInit():
 class CarConfig():
     def __init__(self, env, car, decision):
         self.fea_ext = FeatureExt(env, car)
-        if decision:
-            self.path = path_planner(env, self.fea_ext)
-            self.dec_maker = RuleBased(self.fea_ext)
-            self.controller = PID_controller(self.fea_ext)
-            # self.controller = MPC(self.fea_ext)

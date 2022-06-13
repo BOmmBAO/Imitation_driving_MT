@@ -238,7 +238,7 @@ class FrenetPlanner:
             wx.append(p[0])
             wy.append(p[1])
             wz.append(p[2])
-        self.csp = cubic_spline_planner.Spline3D(wx, wy, wz)
+        self.csp = cubic_spline.Spline3D(wx, wy, wz)
 
     def update_obstacles(self, ob):
         self.ob = ob

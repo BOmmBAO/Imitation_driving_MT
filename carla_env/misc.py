@@ -77,7 +77,46 @@ def delta_angle_between(theta_1, theta_2):
     elif -360 <= delta_theta and delta_theta <= -180:
         delta_theta += 360
     return delta_theta
+def euclidean_distance(v1, v2):
+    return math.sqrt(sum([(a - b) ** 2 for a, b in zip(v1, v2)]))
 
+
+def inertial_to_body_frame(ego_location, xi, yi, psi):
+    Xi = np.array([xi, yi])  # inertial frame
+    R_psi_T = np.array([[np.cos(psi), np.sin(psi)],  # Rotation matrix transpose
+                        [-np.sin(psi), np.cos(psi)]])
+    Xt = np.array([ego_location[0],  # Translation from inertial to body frame
+                   ego_location[1]])
+    Xb = np.matmul(R_psi_T, Xi - Xt)
+    return Xb
+
+
+def closest_wp_idx(ego_state, fpath, f_idx, w_size=10):
+    """
+    given the ego_state and frenet_path this function returns the closest WP in front of the vehicle that is within the w_size
+    """
+
+    min_dist = 300  # in meters (Max 100km/h /3.6) * 2 sn
+    ego_location = [ego_state[0], ego_state[1]]
+    closest_wp_index = 0  # default WP
+    w_size = w_size if w_size <= len(fpath.t) - 2 - f_idx else len(fpath.t) - 2 - f_idx
+    for i in range(w_size):
+        temp_wp = [fpath.x[f_idx + i], fpath.y[f_idx + i]]
+        temp_dist = euclidean_distance(ego_location, temp_wp)
+        if temp_dist <= min_dist \
+                and inertial_to_body_frame(ego_location, temp_wp[0], temp_wp[1], ego_state[2])[0] > 0.0:
+            closest_wp_index = i
+            min_dist = temp_dist
+
+    return f_idx + closest_wp_index
+
+def replace_nans(data: dict, nan=0.0, pos_inf=0.0, neg_inf=0.0):
+    """In-place replacement of non-numerical values, i.e. NaNs and +/- infinity"""
+    for key, value in data.items():
+        if np.isnan(value).any() or np.isinf(value).any():
+            data[key] = np.nan_to_num(value, nan=nan, posinf=pos_inf, neginf=neg_inf)
+
+    return data
 
 if __name__ == '__main__':
     print(command2Vector(4.0))

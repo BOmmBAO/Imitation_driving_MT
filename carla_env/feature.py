@@ -18,21 +18,21 @@ class STATUS:
 
 class FeatureExt():
 
-    def __init__(self, env, vehicle):
+    def __init__(self, world_modul, dt, vehicle):
         self.autopilot = False
         self.dim = '3d'
         self.traffic_light_flag = None
-        self.world = env.world
+        self.world = world_modul.world
         self.vehicle = vehicle
-        self.vehicle_info = VehicleInfo(vehicle, env.desired_speed)
-        self.map = env._map
-        self.zombie_cars = env.zombie_cars
+        self.vehicle_info = VehicleInfo(vehicle)
+        self.map = world_modul.town_mao
+        self.zombie_cars = None
         self.cur_lane = None
         self.cur_lane_width = None
         self.cur_wp = None
         self.wp_list = None
         self.current_loc = None
-        self.dt = env.delta_time
+        self.dt = dt
 
         self.waypoints_buffer = None
         self.waypoints_buffer_lane_id = None
@@ -41,7 +41,7 @@ class FeatureExt():
         self.distance_rate = 1.4
         self.wp_index = self.exponential_index(horizon=70)
 
-        self.visible_zombie_cars = env.visible_zombie_cars
+        self.visible_zombie_cars = None
         self.show_dt = 0.2
         self.is_junction = False
 
@@ -369,7 +369,7 @@ class FeatureExt():
     def obs_update(self, one_car=True):
         #feature list
         self.info_dict.clear()
-        self.ext_egocar_info(self.vehicle, local_frame = False)
+        #self.ext_egocar_info(self.vehicle, local_frame = False)
         if not one_car:
             self.ext_zombiecars_info(local_frame = True)
         self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = False)
@@ -570,9 +570,9 @@ class FeatureExt():
 
 class VehicleInfo:
 
-    def __init__(self, vehicle, desired_v):
+    def __init__(self, vehicle):
         self.vehicle = vehicle
-        self.target_vel = desired_v
+        self.target_vel = 12
         self.dt = 0.1
 
         self.merge_length = 0

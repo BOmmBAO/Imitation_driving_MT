@@ -14,11 +14,9 @@ import numpy as np
 
 import carla
 
-
 def draw_waypoints(world, waypoints, z=0.5):
     """
     Draw a list of waypoints at a certain height given in z.
-
     :param world: carla.world object
     :param waypoints: list or iterable container with the waypoints to draw
     :param z: height in meters
@@ -46,7 +44,6 @@ def get_speed(vehicle):
 def is_within_distance_ahead(target_location, current_location, orientation, max_distance):
     """
     Check if a target object is within a certain distance in front of a reference object.
-
     :param target_location: location of the target object
     :param current_location: location of the reference object
     :param orientation: orientation of the reference object
@@ -73,7 +70,6 @@ def is_within_distance_ahead(target_location, current_location, orientation, max
 def compute_magnitude_angle(target_location, current_location, orientation):
     """
     Compute relative angle and distance between a target_location and a current_location
-
     :param target_location: location of the target object
     :param current_location: location of the reference object
     :param orientation: orientation of the reference object

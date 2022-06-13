@@ -1,13 +1,8 @@
-#! /usr/bin/python
-# -*- coding: utf-8 -*-
-u"""
-Cubic Spline library on python
+"""
+cubic spline planner
 
-author Atsushi Sakai
+Author: Atsushi Sakai
 
-usage: see test codes as below
-
-license: MIT
 """
 import math
 import numpy as np
@@ -140,8 +135,6 @@ class Spline2D:
 
     def __init__(self, x, y):
         self.s = self.__calc_s(x, y)
-        self.x = x
-        self.y = y
         self.sx = Spline(self.s, x)
         self.sy = Spline(self.s, y)
 
@@ -181,13 +174,84 @@ class Spline2D:
         dx = self.sx.calcd(s)
         dy = self.sy.calcd(s)
         yaw = math.atan2(dy, dx)
-        # i = bisect.bisect(self.s, s) - 1
-        # dx = self.x[i+1]-self.x[i]
-        # dy = self.y[i+1]-self.y[i]
-        # yaw = math.atan2(dy, dx)
         return yaw
 
-def test_spline2d():
+
+class Spline3D:
+    """
+    3D Cubic Spline class
+    """
+
+    def __init__(self, x, y, z):
+        self.s = self.__calc_s(x, y, z)
+        self.sx = Spline(self.s, x)
+        self.sy = Spline(self.s, y)
+        self.sz = Spline(self.s, z)
+
+    def __calc_s(self, x, y, z):
+        dx = np.diff(x)
+        dy = np.diff(y)
+        dz = np.diff(z)
+        self.ds = [math.sqrt(idx ** 2 + idy ** 2 + idz ** 2) for (idx, idy, idz) in zip(dx, dy, dz)]
+        s = [0]
+        s.extend(np.cumsum(self.ds))
+        return s
+
+    def calc_position(self, s):
+        u"""
+        calc position
+        """
+        x = self.sx.calc(s)
+        y = self.sy.calc(s)
+        z = self.sz.calc(s)
+        return x, y, z
+
+    def calc_curvature(self, s):
+        u"""
+        calc curvature
+        """
+        dx = self.sx.calcd(s)
+        ddx = self.sx.calcdd(s)
+        dy = self.sy.calcd(s)
+        ddy = self.sy.calcdd(s)
+        k = (ddy * dx - ddx * dy) / (dx ** 2 + dy ** 2)
+        return k
+
+    def calc_yaw(self, s):
+        u"""
+        calc yaw
+        """
+        dx = self.sx.calcd(s)
+        dy = self.sy.calcd(s)
+        yaw = math.atan2(dy, dx)
+        return yaw
+
+    def calc_pitch(self, s):
+        """
+        calc pitch - this function needs to be double checked
+        """
+        dx = self.sx.calcd(s)
+        dz = self.sz.calcd(s)
+        pitch = math.atan2(dz, dx)
+        return pitch
+
+
+def calc_spline_course(x, y, ds=0.1):
+    sp = Spline2D(x, y)
+    s = list(np.arange(0, sp.s[-1], ds))
+
+    rx, ry, ryaw, rk = [], [], [], []
+    for i_s in s:
+        ix, iy = sp.calc_position(i_s)
+        rx.append(ix)
+        ry.append(iy)
+        ryaw.append(sp.calc_yaw(i_s))
+        rk.append(sp.calc_curvature(i_s))
+
+    return rx, ry, ryaw, rk, s
+
+
+def main():
     print("Spline 2D test")
     import matplotlib.pyplot as plt
     x = [-2.5, 0.0, 2.5, 5.0, 7.5, 3.0, -1.0]
@@ -230,24 +294,5 @@ def test_spline2d():
     plt.show()
 
 
-def test_spline():
-
-    print("Spline test")
-    import matplotlib.pyplot as plt
-    x = [-0.5, 0.0, 0.5, 1.0, 1.5]
-    y = [3.2, 2.7, 6, 5, 6.5]
-
-    spline = Spline(x, y)
-    rx = np.arange(-2.0, 4, 0.01)
-    ry = [spline.calc(i) for i in rx]
-
-    plt.plot(x, y, "xb")
-    plt.plot(rx, ry, "-r")
-    plt.grid(True)
-    plt.axis("equal")
-    plt.show()
-
-
 if __name__ == '__main__':
-    test_spline()
-    test_spline2d()
+    main()
