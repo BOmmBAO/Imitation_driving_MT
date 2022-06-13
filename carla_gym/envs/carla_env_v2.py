@@ -17,8 +17,6 @@ try:
     from os import path as osp
 except ImportError:
     raise RuntimeError('import error!')
-from carla_env.sim_carla import SimInit
-from carla_env.sim_vehicle import VehicleInit
 from carla_env.feature import *
 
 MODULE_WORLD = 'WORLD'
@@ -39,12 +37,11 @@ class CarlaEnv(gym.Env):
 
     NAVIGATION_FEATURES = dict()
 
-    def __init__(self): #lanes_change=5):
+    def __init__(self, args): #lanes_change=5):
         self.__version__ = "0.9.12"
 
         # simulation
         self.verbosity = 0
-        self.auto_render = False  # automatically render the environment
         self.n_step = 0
         try:
             self.global_route = np.load(
@@ -105,9 +102,9 @@ class CarlaEnv(gym.Env):
         # instances
         self.ego = None
         self.ego_los_sensor = None
-        self.module_manager = None
-        self.world_module = None
-        self.traffic_module = None
+        self.module_manager = ModuleManager()
+        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=10.0, module_manager=self.module_manager)
+        self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
         self.hud_module = None
         self.input_module = None
         self.control_module = None
@@ -489,27 +486,10 @@ class CarlaEnv(gym.Env):
 
             """
                     **********************************************************************************************************************
-                    *********************************************** Draw Waypoints *******************************************************
-                    **********************************************************************************************************************
-            """
-
-            if self.world_module.args.play_mode != 0:
-                for i in range(len(fpath.t)):
-                    self.world_module.points_to_draw['path wp {}'.format(i)] = [
-                        carla.Location(x=fpath.x[i], y=fpath.y[i]),
-                        'COLOR_ALUMINIUM_0']
-                self.world_module.points_to_draw['ego'] = [self.ego.get_location(), 'COLOR_SCARLET_RED_0']
-                self.world_module.points_to_draw['waypoint ahead'] = carla.Location(x=cmdWP[0], y=cmdWP[1])
-                self.world_module.points_to_draw['waypoint ahead 2'] = carla.Location(x=cmdWP2[0], y=cmdWP2[1])
-
-            """
-                    **********************************************************************************************************************
                     ************************************************ Update Carla ********************************************************
                     **********************************************************************************************************************
             """
             self.module_manager.tick()  # Update carla world
-            if self.auto_render:
-                self.render()
 
             collision_hist = self.world_module.get_collision_history()
 
@@ -705,7 +685,7 @@ class CarlaEnv(gym.Env):
         # define and register module instances
         self.module_manager = ModuleManager()
         width, height = [int(x) for x in args.carla_res.split('x')]
-        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=10.0, module_manager=self.module_manager,
+        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=20.0, module_manager=self.module_manager,
                                         width=width, height=height)
         self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
         self.module_manager.register_module(self.world_module)

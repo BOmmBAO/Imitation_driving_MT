@@ -10,6 +10,7 @@ from pathlib import Path
 currentPath = osp.dirname(osp.abspath(inspect.getfile(inspect.currentframe())))
 # sys.path.insert(1, currentPath + '/agents/stable_baselines/')
 import shutil
+from carla_gym.envs.carla_env_v2 import CarlaEnv
 
 from rl_algorithm.stable_baselines.bench import Monitor
 from rl_algorithm.stable_baselines.ddpg.policies import MlpPolicy as DDPGMlpPolicy
@@ -31,10 +32,10 @@ from config import cfg, log_config_to_file, cfg_from_list, cfg_from_yaml_file
 
 def parse_args_cfgs():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
-    parser.add_argument('--env', help='environment ID', type=str, default='CarlaGymEnv-v1')
+    parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
+    parser.add_argument('--env', help='environment ID', type=str, default='CarlaGymEnv-v2')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=int, default=None),
+    parser.add_argument('--agent_id', type=int, default=1),
     parser.add_argument('--num_timesteps', type=float, default=1e7),
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
@@ -72,11 +73,8 @@ def parse_args_cfgs():
 if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
-    env = gym.make(args.env)
-    if args.play_mode:
-        env.enable_auto_render()
+    env = CarlaEnv(args)
     env.begin_modules(args)
-    n_actions = env.action_space.shape[-1]  # the noise objects for DDPG
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------
@@ -113,20 +111,8 @@ if __name__ == '__main__':
             env = Monitor(env, 'logs/', info_keywords=('reserved',))                                   # logging monitor
         model_dir = save_path + '{}_final_model'.format(cfg.POLICY.NAME)                               # model save/load directory
 
-        if cfg.POLICY.NAME == 'DDPG':
-            action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(n_actions),
-                                                        sigma=float(cfg.POLICY.ACTION_NOISE) * np.ones(n_actions))
-
-            param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(cfg.POLICY.PARAM_NOISE_STD),
-                                                 desired_action_stddev=float(cfg.POLICY.PARAM_NOISE_STD))
-            model = DDPG(policy[cfg.POLICY.NET], env, verbose=1, param_noise=param_noise, action_noise=action_noise,
-                         policy_kwargs={'cnn_extractor': eval(cfg.POLICY.CNN_EXTRACTOR)})
-        elif cfg.POLICY.NAME == 'PPO2':
-            model = PPO2(policy[cfg.POLICY.NET], env, verbose=1, model_dir=save_path, policy_kwargs={'cnn_extractor': eval(cfg.POLICY.CNN_EXTRACTOR)})
-        elif cfg.POLICY.NAME == 'TRPO':
-            model = TRPO(policy[cfg.POLICY.NET], env, verbose=1, model_dir=save_path, policy_kwargs={'cnn_extractor': eval(cfg.POLICY.CNN_EXTRACTOR)})
-        elif cfg.POLICY.NAME =='A2C':
-            model = A2C(policy[cfg.POLICY.NET], env, verbose=1, model_dir=save_path, policy_kwargs={'cnn_extractor': eval(cfg.POLICY.CNN_EXTRACTOR)})
+        if cfg.POLICY.NAME == 'PPO2':
+            model = PPO2(policy[cfg.POLICY.NET], env, verbose=0, model_dir=save_path, policy_kwargs=None)
         else:
             print(cfg.POLICY.NAME)
             raise Exception('Algorithm name is not defined!')
@@ -167,17 +153,8 @@ if __name__ == '__main__':
 
         model_dir = save_path + args.test_model  # model save/load directory
         print('{} is Loading...'.format(args.test_model))
-        if cfg.POLICY.NAME == 'DDPG':
-            model = DDPG.load(model_dir)
-            model.action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(n_actions),
-                                                              sigma=np.zeros(n_actions))
-            model.param_noise = None
-        elif cfg.POLICY.NAME == 'PPO2':
+        if cfg.POLICY.NAME == 'PPO2':
             model = PPO2.load(model_dir)
-        elif cfg.POLICY.NAME == 'TRPO':
-            model = TRPO.load(model_dir)
-        elif cfg.POLICY.NAME == 'A2C':
-            model = A2C.load(model_dir)
         else:
             print(cfg.POLICY.NAME)
             raise Exception('Algorithm name is not defined!')

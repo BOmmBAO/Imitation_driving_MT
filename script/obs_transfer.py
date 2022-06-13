@@ -425,7 +425,7 @@ def _check_laneinvasion(obs, obs_index):
 if __name__ == '__main__':
     try:
         transformation()
-        # test_in_carla()
+        test_in_carla()
     except KeyboardInterrupt:
         print('Exit by user')
 

@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 import carla
-from agents.tools.misc import get_speed
+from tools.misc import get_speed
 from config import cfg
 
 

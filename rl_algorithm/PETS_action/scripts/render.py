@@ -8,9 +8,9 @@ import pprint
 
 from dotmap import DotMap
 
-from dmbrl.misc.MBExp import MBExperiment
-from dmbrl.controllers.MPC import MPC
-from dmbrl.config import create_config
+from rl_algorithm.PETS_action.dmbrl.misc.MBExp import MBExperiment
+from rl_algorithm.PETS_action.dmbrl.controllers.MPC import MPC
+from rl_algorithm.PETS_action.dmbrl.config import create_config
 
 
 def main(env, ctrl_type, ctrl_args, overrides, model_dir, logdir):
