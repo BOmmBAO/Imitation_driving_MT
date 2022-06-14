@@ -9,7 +9,6 @@ from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanne
 from plan_control.controller import VehiclePIDController
 from tools.misc import get_speed
 from plan_control.controller import IntelligentDriverModel
-import argparse
 
 try:
     import numpy as np
@@ -125,6 +124,7 @@ class CarlaEnv(gym.Env):
         self.module_manager.tick()  # Update carla world
 
         self.init_transform = self.ego.get_transform()  # ego initial transform to recover at each episode
+        self.spectator = self.world_module.spectator
 
 
 
@@ -417,37 +417,38 @@ class CarlaEnv(gym.Env):
         """
         Given the traffic actors fill the desired tensor with appropriate values and time_steps
         """
-        self.enumerate_actors()
+        # self.enumerate_actors()
+        #
+        # self.actor_enumerated_dict['EGO']['SPEED'].extend(self.actor_enumerated_dict['EGO']['SPEED'][-1]
+        #                                                   for _ in range(
+        #     self.look_back - len(self.actor_enumerated_dict['EGO']['NORM_D'])))
+        #
+        # for act_values in self.actor_enumerated_dict.values():
+        #     act_values['S'].extend(act_values['S'][-1] for _ in range(self.look_back - len(act_values['S'])))
+        #
+        # _range = np.arange(-self.look_back, -1, int(np.ceil(self.look_back / self.time_step)),
+        #                    dtype=int)  # add last observation
+        # _range = np.append(_range, -1)
+        #
+        # lstm_obs = np.concatenate((np.array(self.actor_enumerated_dict['EGO']['SPEED'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LEADING']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['FOLLOWING']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LEFT']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LEFT_UP']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LEFT_DOWN']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LLEFT']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LLEFT_UP']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['LLEFT_DOWN']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['RIGHT']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['RIGHT_UP']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['RIGHT_DOWN']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['RRIGHT']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['RRIGHT_UP']['S'])[_range],
+        #                            np.array(self.actor_enumerated_dict['RRIGHT_DOWN']['S'])[_range]),
+        #                           axis=0)
+        lstm_obs = np.zeros((15,5))
 
-        self.actor_enumerated_dict['EGO']['SPEED'].extend(self.actor_enumerated_dict['EGO']['SPEED'][-1]
-                                                          for _ in range(
-            self.look_back - len(self.actor_enumerated_dict['EGO']['NORM_D'])))
-
-        for act_values in self.actor_enumerated_dict.values():
-            act_values['S'].extend(act_values['S'][-1] for _ in range(self.look_back - len(act_values['S'])))
-
-        _range = np.arange(-self.look_back, -1, int(np.ceil(self.look_back / self.time_step)),
-                           dtype=int)  # add last observation
-        _range = np.append(_range, -1)
-
-        lstm_obs = np.concatenate((np.array(self.actor_enumerated_dict['EGO']['SPEED'])[_range],
-                                   np.array(self.actor_enumerated_dict['LEADING']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['FOLLOWING']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['LEFT']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['LEFT_UP']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['LEFT_DOWN']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['LLEFT']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['LLEFT_UP']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['LLEFT_DOWN']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['RIGHT']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['RIGHT_UP']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['RIGHT_DOWN']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['RRIGHT']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['RRIGHT_UP']['S'])[_range],
-                                   np.array(self.actor_enumerated_dict['RRIGHT_DOWN']['S'])[_range]),
-                                  axis=0)
-
-        return lstm_obs.reshape(self.observation_space.shape[1], -1).transpose()  # state
+        return lstm_obs.reshape(15, -1).transpose()  # state
 
     def step(self, action):
         self.n_step += 1
@@ -514,6 +515,9 @@ class CarlaEnv(gym.Env):
                     ************************************************ Update Carla ********************************************************
                     **********************************************************************************************************************
             """
+            transform = self.ego.get_transform()
+            self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+                                                         carla.Rotation(pitch=-90)))
             self.module_manager.tick()  # Update carla world
 
             collision_hist = self.world_module.get_collision_history()
@@ -555,8 +559,6 @@ class CarlaEnv(gym.Env):
                       '{:+8.6f}'.format(cars_info[-1][0]))
                 for idx in range(1, cars_info.shape[1]):
                     print(TENSOR_ROW_NAMES[idx].ljust(15), '{:+8.6f}'.format(cars_info[-1][idx]))
-
-        if self.verbosity == 3: print(cars_info)
         """
                 **********************************************************************************************************************
                 ********************************************* RL Reward Function *****************************************************
@@ -605,6 +607,7 @@ class CarlaEnv(gym.Env):
 
         reward = positives + negatives + track_rewd + ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
         # print(self.n_step, self.eps_rew)
+        print("reward:", positives, negatives)
         """
                       **********************************************************************************************************************
                       ********************************************* Episode Termination ****************************************************
@@ -613,7 +616,7 @@ class CarlaEnv(gym.Env):
 
         done = False
         if collision:
-            # print('Collision happened!')
+            print('Collision happened!')
             reward = self.collision_penalty
             done = True
             self.eps_rew += reward
@@ -622,7 +625,7 @@ class CarlaEnv(gym.Env):
             return self.state, reward, done, {'reserved': 0}
 
         elif track_finished:
-            # print('Finished the race')
+            print('Finished the race')
             # reward = 10
             done = True
             if off_the_road:
@@ -633,7 +636,7 @@ class CarlaEnv(gym.Env):
             return self.state, reward, done, {'reserved': 0}
 
         elif off_the_road:
-            # print('Collision happened!')
+            print('Collision happened because of off the road!')
             reward = self.off_the_road_penalty
             # done = True
             self.eps_rew += reward
@@ -702,6 +705,9 @@ class CarlaEnv(gym.Env):
         self.module_manager.tick()
         self.ego.set_simulate_physics(enabled=True)
         # ----
+        transform = self.ego.get_transform()
+        self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+                                                carla.Rotation(pitch=-90)))
         return self.state
 
 

@@ -33,11 +33,11 @@ def parse_args_cfgs():
     parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
     parser.add_argument('--env', help='environment ID', type=str, default='CarlaGymEnv-v2')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=int, default=1),
+    parser.add_argument('--agent_id', type=int, default=2),
     parser.add_argument('--num_timesteps', type=float, default=1e7),
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
-    parser.add_argument('--verbosity', help='Terminal mode: 0:Off, 1:Action,Reward 2:All', default=0, type=int)
+    parser.add_argument('--verbosity', help='Terminal mode: 0:Off, 1:Action,Reward 2:All', default=1, type=int)
     parser.add_argument('--test', default=False, action='store_true')
     parser.add_argument('--test_model', help='test model file name', type=str, default='')
     parser.add_argument('--test_last', help='test model best or last?', action='store_true', default=False)

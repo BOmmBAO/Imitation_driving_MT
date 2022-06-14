@@ -161,6 +161,8 @@ class ModuleManager:
         self.clear_modules()
         sys.exit()
 
+class HUD
+
 import time
 class ModuleWorld:
     def __init__(self, name, args, timeout, module_manager):
@@ -195,6 +197,7 @@ class ModuleWorld:
         self.world = None
         self.town_map = None
         self.world, self.town_map = self._get_data_from_carla()
+        self.spectator = self.world.get_spectator()
         self.actors_with_transforms = []
 
         # Store necessary modules
@@ -270,6 +273,7 @@ class ModuleWorld:
             world.set_weather(getattr(carla.WeatherParameters, 'ClearNoon'))
             print('Map: Town04 --- Weather: ClearNoon')
             town_map = world.get_map()
+
             return world, town_map
 
         except RuntimeError as ex:
@@ -305,6 +309,9 @@ class ModuleWorld:
         print('Spawned ego in: ', spawn_point)
 
         self.hero_transform = self.hero_actor.get_transform()
+        self.spectator.set_transform(carla.Transform(self.hero_transform.location + carla.Location(z=50),
+                                                     carla.Rotation(pitch=-90)))
+        self.world.tick()
 
         # collision sensor
         self.collision_sensor = CollisionSensor(self.hero_actor)
@@ -331,7 +338,6 @@ class ModuleWorld:
         self.hero_actor.set_angular_velocity(carla.Vector3D(x=0, y=0, z=0))
         transform = carla.Transform(location=carla.Location(x=x, y=y, z=z), rotation=carla.Rotation(pitch=0.0, yaw=math.degrees(yaw), roll=0.0))
         self.hero_actor.set_transform(transform)
-        self.spectator = self.world.get_spectator()
         transform = self.hero_actor.get_transform()
         self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=50),
                                                 carla.Rotation(pitch=-90)))
