@@ -19,10 +19,8 @@ from rl_algorithm.stable_baselines.common.policies import MlpPolicy as CommonMlp
 from rl_algorithm.stable_baselines.common.policies import MlpLstmPolicy as CommonMlpLstmPolicy
 from rl_algorithm.stable_baselines.common.policies import CnnPolicy as CommonCnnPolicy
 from rl_algorithm.stable_baselines.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise, AdaptiveParamNoiseSpec
-from rl_algorithm.stable_baselines import DDPG
 from rl_algorithm.stable_baselines import PPO2
-from rl_algorithm.stable_baselines import TRPO
-from rl_algorithm.stable_baselines import A2C
+
 from rl_algorithm.stable_baselines.common.policies import BasePolicy, nature_cnn, register_policy, sequence_1d_cnn, sequence_1d_cnn_ego_bypass_tc
 
 
@@ -39,7 +37,6 @@ def parse_args_cfgs():
     parser.add_argument('--num_timesteps', type=float, default=1e7),
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
-    parser.add_argument('--play_mode', type=int, help='Display mode: 0:off, 1:2D, 2:3D ', default=0)
     parser.add_argument('--verbosity', help='Terminal mode: 0:Off, 1:Action,Reward 2:All', default=0, type=int)
     parser.add_argument('--test', default=False, action='store_true')
     parser.add_argument('--test_model', help='test model file name', type=str, default='')
@@ -78,10 +75,8 @@ if __name__ == '__main__':
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------------------
-    if cfg.POLICY.NAME == 'DDPG':
-        policy = {'MLP': DDPGMlpPolicy, 'CNN': DDPGCnnPolicy}   # DDPG does not have LSTM policy
-    else:
-        policy = {'MLP': CommonMlpPolicy, 'LSTM': CommonMlpLstmPolicy, 'CNN': CommonCnnPolicy}
+
+    policy = {'MLP': CommonMlpPolicy, 'LSTM': CommonMlpLstmPolicy, 'CNN': CommonCnnPolicy}
 
     if not args.test:  # training
         if args.agent_id is not None:

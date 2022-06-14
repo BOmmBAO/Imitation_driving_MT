@@ -41,13 +41,17 @@ class CarlaEnv(gym.Env):
         self.__version__ = "0.9.12"
 
         # simulation
-        self.verbosity = 0
+        self.verbosity = args.verbosity
         self.n_step = 0
-        try:
-            self.global_route = np.load(
-                'road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
-        except IOError:
-            self.global_route = None
+        # self.global_route = np.load(
+        #         'road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
+        self.global_route = None
+        self.acceleration_ = 0
+        self.eps_rew = 0
+        if float(cfg.CARLA.DT) > 0:
+            self.dt = float(cfg.CARLA.DT)
+        else:
+            self.dt = 0.05
 
         # constraints
         self.targetSpeed = float(cfg.GYM_ENV.TARGET_SPEED)
@@ -81,6 +85,7 @@ class CarlaEnv(gym.Env):
 
         self.off_the_road_penalty = int(cfg.RL.OFF_THE_ROAD)
         self.collision_penalty = int(cfg.RL.COLLISION)
+
         if cfg.GYM_ENV.FIXED_REPRESENTATION:
             self.low_state = np.array([[-1 for _ in range(self.look_back)] for _ in range(16)])
             self.high_state = np.array([[1 for _ in range(self.look_back)] for _ in range(16)])
@@ -89,8 +94,6 @@ class CarlaEnv(gym.Env):
                 [[-1 for _ in range(self.look_back)] for _ in range(int(self.N_SPAWN_CARS + 1) * 2 + 1)])
             self.high_state = np.array(
                 [[1 for _ in range(self.look_back)] for _ in range(int(self.N_SPAWN_CARS + 1) * 2 + 1)])
-        self.actor_space = gym.spaces.Box(low=-1, high=1, shape=(self.time_step + 1, 15),
-                                                dtype=np.float32)
 
 
         action_low = np.array([-1, -1])
@@ -100,18 +103,30 @@ class CarlaEnv(gym.Env):
         self.state = np.zeros_like(self.observation_space.sample())
 
         # instances
-        self.ego = None
-        self.ego_los_sensor = None
         self.module_manager = ModuleManager()
         self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=10.0, module_manager=self.module_manager)
         self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
-        self.hud_module = None
-        self.input_module = None
-        self.control_module = None
-        self.init_transform = None  # ego initial transform to recover at each episode
-        self.acceleration_ = 0
-        self.eps_rew = 0
-        self.dt = cfg.CARLA.DT
+        self.module_manager.register_module(self.world_module)
+        self.module_manager.register_module(self.traffic_module)
+        self._get_global_rout()
+        self.motionPlanner = MotionPlanner()
+
+        # Start Modules
+        self.motionPlanner.start(self.global_route)
+        self.world_module.update_global_route_csp(self.motionPlanner.csp)
+        self.traffic_module.update_global_route_csp(self.motionPlanner.csp)
+        self.module_manager.start_modules()
+
+        self.ego = self.world_module.hero_actor
+        self.ego_los_sensor = self.world_module.los_sensor
+        self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
+        self.IDM = IntelligentDriverModel(self.ego)
+
+        self.module_manager.tick()  # Update carla world
+
+        self.init_transform = self.ego.get_transform()  # ego initial transform to recover at each episode
+
+
 
         """
         ['EGO', 'LEADING', 'FOLLOWING', 'LEFT', 'LEFT_UP', 'LEFT_DOWN', 'LLEFT', 'LLEFT_UP',
@@ -121,13 +136,23 @@ class CarlaEnv(gym.Env):
         self.actor_enumeration = []
         self.side_window = 5  # times 2 to make adjacent window
 
-        self.motionPlanner = None
-        self.vehicleController = None
 
-        if float(cfg.CARLA.DT) > 0:
-            self.dt = float(cfg.CARLA.DT)
-        else:
-            self.dt = 0.05
+
+
+    def _get_global_rout(self):
+        if self.global_route is None:
+            self.global_route = np.empty((0, 3))
+            distance = 1
+            for i in range(1520):
+                wp = self.world_module.town_map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
+                                                             project_to_road=True).next(distance=distance)[0]
+                distance += 2
+                self.global_route = np.append(self.global_route,
+                                              [[wp.transform.location.x, wp.transform.location.y,
+                                                wp.transform.location.z]], axis=0)
+                # To visualize point clouds
+                self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
+            np.save('road_maps/global_route_town04', self.global_route)
 
     def get_vehicle_ahead(self, ego_s, ego_d, ego_init_d, ego_target_d):
         """
@@ -679,61 +704,6 @@ class CarlaEnv(gym.Env):
         # ----
         return self.state
 
-    def begin_modules(self, args):
-        self.verbosity = args.verbosity
-
-        # define and register module instances
-        self.module_manager = ModuleManager()
-        width, height = [int(x) for x in args.carla_res.split('x')]
-        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=20.0, module_manager=self.module_manager,
-                                        width=width, height=height)
-        self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
-        self.module_manager.register_module(self.world_module)
-        self.module_manager.register_module(self.traffic_module)
-        if args.play_mode:
-            self.hud_module = ModuleHUD(MODULE_HUD, width, height, module_manager=self.module_manager)
-            self.module_manager.register_module(self.hud_module)
-            self.input_module = ModuleInput(MODULE_INPUT, module_manager=self.module_manager)
-            self.module_manager.register_module(self.input_module)
-
-        # generate and save global route if it does not exist in the road_maps folder
-        if self.global_route is None:
-            self.global_route = np.empty((0, 3))
-            distance = 1
-            for i in range(1520):
-                wp = self.world_module.town_map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
-                                                             project_to_road=True).next(distance=distance)[0]
-                distance += 2
-                self.global_route = np.append(self.global_route,
-                                              [[wp.transform.location.x, wp.transform.location.y,
-                                                wp.transform.location.z]], axis=0)
-                # To visualize point clouds
-                self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
-            np.save('road_maps/global_route_town04', self.global_route)
-
-        self.motionPlanner = MotionPlanner()
-
-        # Start Modules
-        self.motionPlanner.start(self.global_route)
-        self.world_module.update_global_route_csp(self.motionPlanner.csp)
-        self.traffic_module.update_global_route_csp(self.motionPlanner.csp)
-        self.module_manager.start_modules()
-        # self.motionPlanner.reset(self.world_module.init_s, self.world_module.init_d)
-
-        self.ego = self.world_module.hero_actor
-        self.ego_los_sensor = self.world_module.los_sensor
-        self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
-        self.IDM = IntelligentDriverModel(self.ego)
-
-        self.module_manager.tick()  # Update carla world
-
-        self.init_transform = self.ego.get_transform()
-
-    def enable_auto_render(self):
-        self.auto_render = True
-
-    def render(self, mode='human'):
-        self.module_manager.render(self.world_module.display)
 
     def destroy(self):
         print('Destroying environment...')
