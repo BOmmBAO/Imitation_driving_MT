@@ -11,6 +11,7 @@ currentPath = osp.dirname(osp.abspath(inspect.getfile(inspect.currentframe())))
 # sys.path.insert(1, currentPath + '/agents/stable_baselines/')
 import shutil
 from carla_gym.envs.carla_env_v2 import CarlaEnv
+from carla_gym.envs import Carla_e2e
 
 from rl_algorithm.stable_baselines.bench import Monitor
 from rl_algorithm.stable_baselines.ddpg.policies import MlpPolicy as DDPGMlpPolicy
@@ -30,15 +31,25 @@ from config import cfg, log_config_to_file, cfg_from_list, cfg_from_yaml_file
 
 def parse_args_cfgs():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--play_mode', type=int, help='Display mode: 0:off, 1:2D, 2:3D ', default=1)
+    parser.add_argument(
+        '--rolename',
+        metavar='NAME',
+        default='hero',
+        help='actor role name (default: "hero")')
+    parser.add_argument(
+        '--gamma',
+        default=2.2,
+        type=float,
+        help='Gamma correction of the camera (default: 2.2)')
+    parser.add_argument('--play_mode', type=int, help='Display mode: 0:off, 1:2D, 2:3D ', default=2)
     parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
     parser.add_argument('--env', help='environment ID', type=str, default='CarlaGymEnv-v2')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=int, default=2),
-    parser.add_argument('--num_timesteps', type=float, default=1e7),
+    parser.add_argument('--agent_id', type=int, default=2)
+    parser.add_argument('--num_timesteps', type=float, default=1e7)
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
-    parser.add_argument('--verbosity', help='Terminal mode: 0:Off, 1:Action,Reward 2:All', default=1, type=int)
+    parser.add_argument('--verbosity', help='Terminal mode: 0:Off, 1:Action,Reward 2:All', default=2, type=int)
     parser.add_argument('--test', default=False, action='store_true')
     parser.add_argument('--test_model', help='test model file name', type=str, default='')
     parser.add_argument('--test_last', help='test model best or last?', action='store_true', default=False)
@@ -46,6 +57,7 @@ def parse_args_cfgs():
     parser.add_argument('-p', '--carla_port', metavar='P', default=2000, type=int, help='TCP port to listen to (default: 2000)')
     parser.add_argument('--tm_port', default=8000, type=int, help='Traffic Manager TCP port to listen to (default: 8000)')
     parser.add_argument('--carla_res', metavar='WIDTHxHEIGHT', default='1280x720', help='window resolution (default: 1280x720)')
+    parser.add_argument('--step_per_eps', type=float, default=200)
 
 
     args = parser.parse_args()
@@ -71,7 +83,8 @@ def parse_args_cfgs():
 if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
-    env = CarlaEnv(args)
+    #env = CarlaEnv(args)
+    env = Carla_e2e(args)
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------

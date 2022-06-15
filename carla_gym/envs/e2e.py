@@ -5,11 +5,8 @@ import itertools
 from tools.modules import *
 from config import cfg
 from carla_env.misc import *
-from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanner
-from plan_control.controller import VehiclePIDController
 from tools.misc import get_speed
-from plan_control.controller import IntelligentDriverModel
-
+from carla_env.featur_1 import FeatureExt
 try:
     import numpy as np
     import sys
@@ -42,7 +39,9 @@ class CarlaEnv(gym.Env):
         # simulation
         self.args = args
         self.verbosity = args.verbosity
+        self.total_steps = args.step_per_eps
         self.n_step = 0
+        self.total = 0
         # self.global_route = np.load(
         #         'road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
         self.global_route = None
@@ -69,7 +68,6 @@ class CarlaEnv(gym.Env):
         self.time_step = int(cfg.GYM_ENV.TIME_STEP)
         self.loop_break = int(cfg.GYM_ENV.LOOP_BREAK)
         self.effective_distance_from_vehicle_ahead = int(cfg.GYM_ENV.DISTN_FRM_VHCL_AHD)
-        self.lanechange = False
         self.is_first_path = True
 
         # RL
@@ -80,12 +78,14 @@ class CarlaEnv(gym.Env):
         self.min_speed_loss = float(cfg.RL.MIN_SPEED_LOSS)
         self.lane_change_reward = float(cfg.RL.LANE_CHANGE_REWARD)
         self.lane_change_penalty = float(cfg.RL.LANE_CHANGE_PENALTY)
-        self.sigma_pos = float(cfg.RL.SIGMA_POS)
-        self.sigma_angle = float(cfg.RL.SIGMA_ANGLE)
-
+        self.sigma_pos = 0.3
+        self.sigma_angle = 0.4
+        self.v_lower = 1.0
+        self.v_upper = 0.6
         self.off_the_road_penalty = int(cfg.RL.OFF_THE_ROAD)
         self.collision_penalty = int(cfg.RL.COLLISION)
-
+        self.steer = 0.0
+        self.throttle_or_break = 0.0
         if cfg.GYM_ENV.FIXED_REPRESENTATION:
             self.low_state = np.array([[-1 for _ in range(self.look_back)] for _ in range(16)])
             self.high_state = np.array([[1 for _ in range(self.look_back)] for _ in range(16)])
@@ -100,37 +100,29 @@ class CarlaEnv(gym.Env):
         action_high = np.array([1, 1])
         self.action_space = gym.spaces.Box(low=action_low, high=action_high, shape=(2,), dtype=np.float32)
         # [cn, ..., c1, c0, normalized yaw angle, normalized speed error] => ci: coefficients
-        self.state = np.zeros_like(self.observation_space.sample())
+
 
         # instances
-        pygame.init()
-        pygame.font.init()
         self.width, self.height = [int(x) for x in args.carla_res.split('x')]
-        self.hud_module = ModuleHUD(MODULE_HUD, self.width)
+
+        self.hud_module = ModuleHUD(self.width, self.height)
         self.module_manager = ModuleManager()
-        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=10.0, module_manager=self.module_manager, hud=self.hud_module, decision= True)
+        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=10.0, module_manager=self.module_manager,
+                                       hud=self.hud_module, decision=True)
         self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
         self.module_manager.register_module(self.world_module)
         self.module_manager.register_module(self.traffic_module)
 
-        self._get_global_route()
-        self.motionPlanner = MotionPlanner()
-
-        # Start Modules
-        self.motionPlanner.start(self.global_route)
-        self.world_module.update_global_route_csp(self.motionPlanner.csp)
-        self.traffic_module.update_global_route_csp(self.motionPlanner.csp)
-        self.module_manager.start_modules()
-
         self.ego = self.world_module.hero_actor
         self.ego_los_sensor = self.world_module.los_sensor
-        self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
-        self.IDM = IntelligentDriverModel(self.ego)
 
         self.module_manager.tick()  # Update carla world
 
         self.init_transform = self.ego.get_transform()  # ego initial transform to recover at each episode
-        #self.spectator = self.world_module.spectator
+        self.spectator = self.world_module.spectator
+        self.fea_ext = FeatureExt(self.world_module, self.dt, self.ego)
+        self.fea_ext.update()
+        self.state = np.zeros_like(self.observation_space.sample())
 
 
 
@@ -144,21 +136,6 @@ class CarlaEnv(gym.Env):
 
 
 
-
-    def _get_global_route(self):
-        if self.global_route is None:
-            self.global_route = np.empty((0, 3))
-            distance = 1
-            for i in range(1520):
-                wp = self.world_module.town_map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
-                                                             project_to_road=True).next(distance=distance)[0]
-                distance += 2
-                self.global_route = np.append(self.global_route,
-                                              [[wp.transform.location.x, wp.transform.location.y,
-                                                wp.transform.location.z]], axis=0)
-                # To visualize point clouds
-                self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
-            np.save('road_maps/global_route_town04', self.global_route)
 
     def get_vehicle_ahead(self, ego_s, ego_d, ego_init_d, ego_target_d):
         """
@@ -419,146 +396,60 @@ class CarlaEnv(gym.Env):
         else:
             self.actor_enumerated_dict['RRIGHT_DOWN'] = {'S': [emp_ln_min] if norm_s[13] == -1 else [no_ln_down]}
 
-    def fix_representation(self):
-        """
-        Given the traffic actors fill the desired tensor with appropriate values and time_steps
-        """
-        # self.enumerate_actors()
-        #
-        # self.actor_enumerated_dict['EGO']['SPEED'].extend(self.actor_enumerated_dict['EGO']['SPEED'][-1]
-        #                                                   for _ in range(
-        #     self.look_back - len(self.actor_enumerated_dict['EGO']['NORM_D'])))
-        #
-        # for act_values in self.actor_enumerated_dict.values():
-        #     act_values['S'].extend(act_values['S'][-1] for _ in range(self.look_back - len(act_values['S'])))
-        #
-        # _range = np.arange(-self.look_back, -1, int(np.ceil(self.look_back / self.time_step)),
-        #                    dtype=int)  # add last observation
-        # _range = np.append(_range, -1)
-        #
-        # lstm_obs = np.concatenate((np.array(self.actor_enumerated_dict['EGO']['SPEED'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEADING']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['FOLLOWING']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEFT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEFT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEFT_DOWN']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LLEFT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LLEFT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LLEFT_DOWN']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RIGHT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RIGHT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RIGHT_DOWN']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RRIGHT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RRIGHT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RRIGHT_DOWN']['S'])[_range]),
-        #                           axis=0)
-        lstm_obs = np.zeros((15,5))
-
-        return lstm_obs.reshape(15, -1).transpose()  # state
 
     def step(self, action):
+        transform = self.ego.get_transform()
+        self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+                                                     carla.Rotation(pitch=-90)))
         self.n_step += 1
 
         self.actor_enumerated_dict['EGO'] = {'NORM_S': [], 'NORM_D': [], 'S': [], 'D': [], 'SPEED': []}
         if self.verbosity: print('ACTION'.ljust(15), '{:+8.6f}, {:+8.6f}'.format(float(action[0]), float(action[1])))
         if self.is_first_path:  # Episode start is bypassed
-            action = [0, -1]
+            action = [0.0, 0.0]
             self.is_first_path = False
-        """
-                **********************************************************************************************************************
-                *********************************************** Motion Planner *******************************************************
-                **********************************************************************************************************************
-        """
+        reward = 0
+        self.total += 1
+        if self.n_step < self.total_steps:
+            self.n_step += 1
+            max_steer = self.dt / 1.5
+            max_throttle = self.dt / 0.2
+            throttle_or_brake, steer = action[0], action[1]
+            time_throttle = np.clip(throttle_or_brake, -max_throttle, max_throttle)
+            time_steer = np.clip(steer, -max_steer, max_steer)
+            steer = np.clip(time_steer + self.steer, -1.0, 1.0)
+            throttle_or_brake = np.clip(time_throttle + self.throttle_or_break, -1.0, 1.0)
+            self.steer = steer
+            self.throttle_or_break = throttle_or_brake
+            if throttle_or_brake >= 0:
+                throttle = np.clip(throttle_or_brake, 0, 1)
+                brake = 0
+            else:
+                throttle = 0
+                brake = 1
 
-        temp = [self.ego.get_velocity(), self.ego.get_acceleration()]
-        init_speed = speed = get_speed(self.ego)
-        acc_vec = self.ego.get_acceleration()
-        acc = math.sqrt(acc_vec.x ** 2 + acc_vec.y ** 2 + acc_vec.z ** 2)
-        psi = math.radians(self.ego.get_transform().rotation.yaw)
-        ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, self.max_s]
-        fpath, self.lanechange, off_the_road = self.motionPlanner.run_step_single_path(ego_state, self.f_idx,
-                                                                                       df_n=action[0], Tf=5,
-                                                                                       Vf_n=action[1])
-        wps_to_go = len(fpath.t) - 3  # -2 bc len gives # of items not the idx of last item + 2wp controller is used
-        self.f_idx = 1
+                # Apply control
+            act = carla.VehicleControl(
+                throttle=float(throttle),
+                steer=float(steer),
+                brake=float(brake))
+            self.ego.apply_control(act)
+            for _ in range(1):
+                self.world_module.world.tick()
+            self.fea_ext.update()
 
-        """
-                **********************************************************************************************************************
-                ************************************************* Controller *********************************************************
-                **********************************************************************************************************************
-        """
-        # initialize flags
-        collision = track_finished = False
-        elapsed_time = lambda previous_time: time.time() - previous_time
-        path_start_time = time.time()
-        ego_init_d, ego_target_d = fpath.d[0], fpath.d[-1]
-        # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
-        loop_counter = 0
 
-        while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
-                                          loop_counter < self.loop_break or self.lanechange):
 
-            loop_counter += 1
-            ego_state = [self.ego.get_location().x, self.ego.get_location().y,
-                         math.radians(self.ego.get_transform().rotation.yaw), 0, 0, temp, self.max_s]
+            # if self.world_module.args.play_mode != 0:
+            #     for i in range(len(fpath.t)):
+            #         self.world_module.points_to_draw['path wp {}'.format(i)] = [
+            #             carla.Location(x=fpath.x[i], y=fpath.y[i]),
+            #             'COLOR_ALUMINIUM_0']
+            #     self.world_module.points_to_draw['ego'] = [self.ego.get_location(), 'COLOR_SCARLET_RED_0']
+            #     self.world_module.points_to_draw['waypoint ahead'] = carla.Location(x=cmdWP[0], y=cmdWP[1])
+            #     self.world_module.points_to_draw['waypoint ahead 2'] = carla.Location(x=cmdWP2[0], y=cmdWP2[1])
 
-            self.f_idx = closest_wp_idx(ego_state, fpath, self.f_idx)
-            cmdWP = [fpath.x[self.f_idx], fpath.y[self.f_idx]]
-            cmdWP2 = [fpath.x[self.f_idx + 1], fpath.y[self.f_idx + 1]]
-
-            # overwrite command speed using IDM
-            ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
-            ego_d = fpath.d[self.f_idx]
-            vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
-            cmdSpeed = self.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=vehicle_ahead)
-
-            # control = self.vehicleController.run_step(cmdSpeed, cmdWP)  # calculate control
-            control = self.vehicleController.run_step_2_wp(cmdSpeed, cmdWP, cmdWP2)  # calculate control
-            self.ego.apply_control(control)  # apply control
-            """
-                    **********************************************************************************************************************
-                    *********************************************** Draw Waypoints *******************************************************
-                    **********************************************************************************************************************
-            """
-            if self.world_module.args.play_mode != 0:
-                for i in range(len(fpath.t)):
-                    self.world_module.points_to_draw['path wp {}'.format(i)] = [
-                        carla.Location(x=fpath.x[i], y=fpath.y[i]),
-                        'COLOR_ALUMINIUM_0']
-                self.world_module.points_to_draw['ego'] = [self.ego.get_location(), 'COLOR_SCARLET_RED_0']
-                self.world_module.points_to_draw['waypoint ahead'] = carla.Location(x=cmdWP[0], y=cmdWP[1])
-                self.world_module.points_to_draw['waypoint ahead 2'] = carla.Location(x=cmdWP2[0], y=cmdWP2[1])
-
-            """
-                    **********************************************************************************************************************
-                    ************************************************ Update Carla ********************************************************
-                    **********************************************************************************************************************
-            """
-            # transform = self.ego.get_transform()
-            # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-            #                                              carla.Rotation(pitch=-90)))
-            self.module_manager.tick()  # Update carla world
-
-            collision_hist = self.world_module.get_collision_history()
-
-            self.actor_enumerated_dict['EGO']['S'].append(ego_s)
-            self.actor_enumerated_dict['EGO']['D'].append(ego_d)
-            self.actor_enumerated_dict['EGO']['NORM_S'].append((ego_s - self.init_s) / self.track_length)
-            self.actor_enumerated_dict['EGO']['NORM_D'].append(
-                round((ego_d + self.LANE_WIDTH) / (3 * self.LANE_WIDTH), 2))
-            last_speed = get_speed(self.ego)
-            self.actor_enumerated_dict['EGO']['SPEED'].append(last_speed / self.maxSpeed)
-            # if ego off-the road or collided
-            if any(collision_hist):
-                collision = True
-                break
-
-            distance_traveled = ego_s - self.init_s
-            if distance_traveled < -5:
-                distance_traveled = self.max_s + distance_traveled
-            if distance_traveled >= self.track_length:
-                track_finished = True
-
+        self.module_manager.tick()
         """
                 *********************************************************************************************************************
                 *********************************************** RL Observation ******************************************************
@@ -567,41 +458,22 @@ class CarlaEnv(gym.Env):
         self.fea_ext.update()
         features = self.fea_ext.observation
         if cfg.GYM_ENV.FIXED_REPRESENTATION:
-            cars_info = self.fix_representation()
-            cars_info_fla = cars_info.flatten()
-            self.state = np.concatenate((cars_info_fla,features))
+            self.state = features
             print("len:", len(self.state))
-            if self.verbosity == 2:
-                print(3 * '---EPS UPDATE---')
-                print(TENSOR_ROW_NAMES[0].ljust(15),
-                      #      '{:+8.6f}  {:+8.6f}'.format(self.state[-1][1], self.state[-1][0]))
-                      '{:+8.6f}'.format(cars_info[-1][0]))
-                for idx in range(1, cars_info.shape[1]):
-                    print(TENSOR_ROW_NAMES[idx].ljust(15), '{:+8.6f}'.format(cars_info[-1][idx]))
         """
                 **********************************************************************************************************************
                 ********************************************* RL Reward Function *****************************************************
                 **********************************************************************************************************************
         """
+        self.velocity_buffer.append(self._get_velocity())
         car_x, car_y, car_yaw = self.ego.get_location().x, self.ego.get_location().y, \
                                 self.ego.get_transform().rotation.yaw
-        print(last_speed)
+        last_speed, acc_norm = self._get_velocity()
+        print("speed:", last_speed)
         #speed reward
+        sigma_vel = self.v_upper if last_speed <= self.targetSpeed else self.v_upper
         e_speed = abs(self.targetSpeed - last_speed)
-        r_speed = self.w_r_speed * np.exp(-e_speed ** 2 / self.maxSpeed * self.w_speed)  # 0<= r_speed <= self.w_r_speed
-        #  first two path speed change increases regardless so we penalize it differently
-
-        spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
-        r_laneChange = 0
-
-        if self.lanechange and spd_change_percentage < self.min_speed_gain:
-            r_laneChange = -1 * r_speed * self.lane_change_penalty  # <= 0
-
-        elif self.lanechange:
-            r_speed *= self.lane_change_reward
-
-        positives = r_speed
-        negatives = r_laneChange
+        r_speed = np.exp(-np.power(e_speed, 2) / 2 / sigma_vel / sigma_vel)  # 0<= r_speed <= self.w_r_speed
 
         # sigma_pos = 0.3
         sigma_pos = self.sigma_pos
@@ -624,17 +496,18 @@ class CarlaEnv(gym.Env):
         print("_ang", ang_rewd)
 
 
-        reward = positives + negatives + track_rewd + ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
-        # print(self.n_step, self.eps_rew)
-        print("reward:", positives, negatives)
+        reward = r_speed * track_rewd * ang_rewd
+        print("reward:", reward)
         """
                       **********************************************************************************************************************
                       ********************************************* Episode Termination ****************************************************
                       **********************************************************************************************************************
               """
 
-        done = False
-        if collision:
+        done = collision = False
+        collision_hist = self.world_module.get_collision_history()
+        if any(collision_hist):
+            collision = True
             print('Collision happened!')
             reward = self.collision_penalty
             done = True
@@ -643,25 +516,15 @@ class CarlaEnv(gym.Env):
             if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
             return self.state, reward, done, {'reserved': 0}
 
-        elif track_finished:
-            print('Finished the race')
-            # reward = 10
+        elif abs(lateral_dist) > 0.9:
             done = True
-            if off_the_road:
-                reward = self.off_the_road_penalty
-            self.eps_rew += reward
-            # print('eps rew: ', self.n_step, self.eps_rew)
-            if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
-            return self.state, reward, done, {'reserved': 0}
-
-        elif off_the_road:
-            print('Collision happened because of off the road!')
+            print('Out off the road!')
             reward = self.off_the_road_penalty
             # done = True
             self.eps_rew += reward
             # print('eps rew: ', self.n_step, self.eps_rew)
-            if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
-            return self.state, reward, done, {'reserved': 0}
+        elif self._detect_reset():
+            done = True
 
         self.eps_rew += reward
         # print(self.n_step, self.eps_rew)
@@ -671,19 +534,28 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 171)
+        obs_shape = len(self.fea_ext.observation)
+        obs_high = np.array([np.inf] * obs_shape)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
-        return spaces.Box(-features_space, features_space, dtype='float32')
+        return spaces.Box(-obs_high, obs_high, dtype='float32')
+
+    def _detect_reset(self):
+        def _dis(a, b):
+            return ((b[1]-a[1])**2 + (b[0]-a[0])**2) ** 0.5
+        v_norm_mean = np.mean(self.velocity_buffer)
+        if len(self.velocity_buffer) == 5:
+            if v_norm_mean < 4 or v_norm_mean > 10 :
+                print("still")
+                return True
+        return False
 
     def reset(self):
-        self.vehicleController.reset()
+        self.velocity_buffer = deque([], maxlen=5)
         self.world_module.reset()
         self.init_s = self.world_module.init_s
         init_d = self.world_module.init_d
         self.traffic_module.reset(self.init_s, init_d)
-        self.motionPlanner.reset(self.init_s, self.world_module.init_d, df_n=0, Tf=4, Vf_n=0, optimal_path=False)
-        self.f_idx = 0
 
         self.n_step = 0  # initialize episode steps count
         self.eps_rew = 0
@@ -698,35 +570,16 @@ class CarlaEnv(gym.Env):
 
         self.fea_ext = FeatureExt(self.world_module, self.dt, self.ego)
         self.fea_ext.update()
-
+        features = self.fea_ext.observation
         if cfg.GYM_ENV.FIXED_REPRESENTATION:
-            cars_state = self.fix_representation()
-            road_info = self.fea_ext.observation
-            self.state = np.concatenate((cars_state.flatten(), road_info))
-            if self.verbosity == 2:
-                print(3 * '---RESET---')
-                print(TENSOR_ROW_NAMES[0].ljust(15),
-                      #      '{:+8.6f}  {:+8.6f}'.format(self.state[-1][1], self.state[-1][0]))
-                      '{:+8.6f}'.format(cars_state[-1][0]))
-                for idx in range(1, cars_state.shape[1]):
-                    print(TENSOR_ROW_NAMES[idx].ljust(15), '{:+8.6f}'.format(cars_state[-1][idx]))
-        else:
-            pass  # Could be debugged to be used
-            # pad the feature lists to recover from the cases where the length of path is less than look_back time
-
-            # self.state = self.non_fix_representation(speeds, ego_norm_s, ego_norm_d, actors_norm_s_d)
-
-        # ---
-        # Ego starts to move slightly after being relocated when a new episode starts. Probably, ego keeps a fraction of previous acceleration after
-        # being relocated. To solve this, the following procedure is needed.
+            self.state = features
         self.ego.set_simulate_physics(enabled=False)
-        # for _ in range(5):
         self.module_manager.tick()
         self.ego.set_simulate_physics(enabled=True)
         # ----
-        # transform = self.ego.get_transform()
-        # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-        #                                         carla.Rotation(pitch=-90)))
+        transform = self.ego.get_transform()
+        self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+                                                carla.Rotation(pitch=-90)))
         return self.state
 
     def enable_auto_render(self):

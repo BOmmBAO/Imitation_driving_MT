@@ -25,7 +25,7 @@ class FeatureExt():
         self.world = world_modul.world
         self.vehicle = vehicle
         self.vehicle_info = VehicleInfo(vehicle)
-        self.map = world_modul.town_map
+        self.map = world_modul._map
         self.zombie_cars = None
         self.cur_lane = None
         self.cur_lane_width = None
@@ -369,7 +369,7 @@ class FeatureExt():
     def obs_update(self, one_car=True):
         #feature list
         self.info_dict.clear()
-        #self.ext_egocar_info(self.vehicle, local_frame = False)
+        self.ext_egocar_info(self.vehicle)
         if not one_car:
             self.ext_zombiecars_info(local_frame = True)
         self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = False)
@@ -382,7 +382,7 @@ class FeatureExt():
             self.pre_obs_index = self.ext_obs_index(self.info_dict)
 
 
-    def ext_egocar_info(self, vehicle, local_frame):
+    def ext_egocar_info(self, vehicle):
         ego_heading = np.float32(vehicle.get_transform().rotation.yaw / 180.0 * np.pi)
         ego_heading_vec = np.array((np.cos(ego_heading),
                                     np.sin(ego_heading)))
@@ -392,7 +392,7 @@ class FeatureExt():
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
         a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
-        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
+        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y, vehicle.get_location().z]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
         self.info_dict['ego_car_yaw'] = [ego_heading]
