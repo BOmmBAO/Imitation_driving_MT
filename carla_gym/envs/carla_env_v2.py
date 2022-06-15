@@ -40,6 +40,7 @@ class CarlaEnv(gym.Env):
         self.__version__ = "0.9.12"
 
         # simulation
+        self.args = args
         self.verbosity = args.verbosity
         self.n_step = 0
         # self.global_route = np.load(
@@ -107,7 +108,13 @@ class CarlaEnv(gym.Env):
         self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
         self.module_manager.register_module(self.world_module)
         self.module_manager.register_module(self.traffic_module)
-        self._get_global_rout()
+        if args.play_mode:
+            width, height = [int(x) for x in args.carla_res.split('x')]
+            self.hud_module = ModuleHUD(MODULE_HUD, width, height, module_manager=self.module_manager)
+            self.module_manager.register_module(self.hud_module)
+            self.input_module = ModuleInput(MODULE_INPUT, module_manager=self.module_manager)
+            self.module_manager.register_module(self.input_module)
+        self._get_global_route()
         self.motionPlanner = MotionPlanner()
 
         # Start Modules
@@ -124,7 +131,7 @@ class CarlaEnv(gym.Env):
         self.module_manager.tick()  # Update carla world
 
         self.init_transform = self.ego.get_transform()  # ego initial transform to recover at each episode
-        self.spectator = self.world_module.spectator
+        #self.spectator = self.world_module.spectator
 
 
 
@@ -139,7 +146,7 @@ class CarlaEnv(gym.Env):
 
 
 
-    def _get_global_rout(self):
+    def _get_global_route(self):
         if self.global_route is None:
             self.global_route = np.empty((0, 3))
             distance = 1
@@ -515,9 +522,9 @@ class CarlaEnv(gym.Env):
                     ************************************************ Update Carla ********************************************************
                     **********************************************************************************************************************
             """
-            transform = self.ego.get_transform()
-            self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-                                                         carla.Rotation(pitch=-90)))
+            # transform = self.ego.get_transform()
+            # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+            #                                              carla.Rotation(pitch=-90)))
             self.module_manager.tick()  # Update carla world
 
             collision_hist = self.world_module.get_collision_history()
@@ -705,11 +712,16 @@ class CarlaEnv(gym.Env):
         self.module_manager.tick()
         self.ego.set_simulate_physics(enabled=True)
         # ----
-        transform = self.ego.get_transform()
-        self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-                                                carla.Rotation(pitch=-90)))
+        # transform = self.ego.get_transform()
+        # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+        #                                         carla.Rotation(pitch=-90)))
         return self.state
 
+    def enable_auto_render(self):
+        self.auto_render = True
+
+    def render(self, mode='human'):
+        self.module_manager.render(self.world_module.display)
 
     def destroy(self):
         print('Destroying environment...')

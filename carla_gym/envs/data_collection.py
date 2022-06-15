@@ -2,7 +2,7 @@
 import numpy as np
 import sys
 import os
-from rl_algorithm.TRPO.carla_e2e import CarlaEnv
+from carla_gym.envs.carla_e2e import CarlaEnv
 from carla_env.fplot import FeaPlot
 import matplotlib.pyplot as plt
 from carla_env.common import *

@@ -198,10 +198,10 @@ class FrenetPlanner:
 
         # Parameters
         self.MAX_SPEED = 150.0 / 3.6  # maximum speed [m/s]
-        self.MAX_ACCEL = 4.0  # maximum acceleration [m/ss]  || Tesla model 3: 6.878
+        self.MAX_ACCEL = 2.0  # maximum acceleration [m/ss]  || Tesla model 3: 6.878
         self.MAX_CURVATURE = 1.0  # maximum curvature [1/m]
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
-        self.MAXT = 6.0  # max prediction time [m]
+        self.MAXT = 5.0  # max prediction time [m]
         self.MINT = 3.0  # min prediction time [m]
         self.D_T = 3.0  # prediction timestep length (s)
         self.D_T_S = 5.0 / 3.6  # target speed sampling length [m/s]
