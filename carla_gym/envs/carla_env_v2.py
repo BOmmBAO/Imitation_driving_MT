@@ -148,8 +148,9 @@ class CarlaEnv(gym.Env):
 
     def _get_global_route(self):
         if self.global_route is None:
-            self.global_route = np.array([[self.ego.get_location().x, self.ego.get_location().y,
-                                           self.ego.get_location().z]])
+            self.global_route = np.empty((0, 3))
+            # self.global_route = np.array([[self.ego.get_location().x, self.ego.get_location().y,
+            #                                self.ego.get_location().z]])
             distance = 1
             for i in range(800):
                 wp = self.world_module._map.get_waypoint(self.ego.get_location(),
@@ -551,12 +552,14 @@ class CarlaEnv(gym.Env):
             if any(collision_hist):
                 collision = True
                 break
+            self._get_global_route()
+            self.world_module.update_global_route_csp(self.motionPlanner.csp)
 
-            distance_traveled = ego_s - self.init_s
-            if distance_traveled < -5:
-                distance_traveled = self.max_s + distance_traveled
-            if distance_traveled >= self.track_length:
-                track_finished = True
+            # distance_traveled = ego_s - self.init_s
+            # if distance_traveled < -5:
+            #     distance_traveled = self.max_s + distance_traveled
+            # if distance_traveled >= self.track_length:
+            #     track_finished = True
 
         """
                 *********************************************************************************************************************
