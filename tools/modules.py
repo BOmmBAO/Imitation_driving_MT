@@ -737,12 +737,12 @@ class TrafficManager:
         if otherActor is not None:
             # create a line of sight sensor attached to the vehicle
             los_sensor = LineOfSightSensor(otherActor)
-            otherActor.set_autopilot(False, self.tm_port)
-            otherActor.set_velocity(carla.Vector3D(x=0, y=0, z=0))
-            otherActor.set_angular_velocity(carla.Vector3D(x=0, y=0, z=0))
-            # keep actors and sensors to destroy them when an episode is finished
-            cruiseControl = CruiseControl(otherActor, los_sensor, s, d, lane, self.module_manager, targetSpeed=targetSpeed)
-            deq_s = deque([s], maxlen=50)
+            otherActor.set_autopilot(True, self.tm_port)
+            # otherActor.set_velocity(carla.Vector3D(x=0, y=0, z=0))
+            # otherActor.set_angular_velocity(carla.Vector3D(x=0, y=0, z=0))
+            # # keep actors and sensors to destroy them when an episode is finished
+            # cruiseControl = CruiseControl(otherActor, los_sensor, s, d, lane, self.module_manager, targetSpeed=targetSpeed)
+            # deq_s = deque([s], maxlen=50)
             self.actors_batch.append({'Actor': otherActor, 'Sensor': los_sensor, 'Cruise Control': cruiseControl, 'Frenet State': [deq_s, d]})
         return otherActor
 

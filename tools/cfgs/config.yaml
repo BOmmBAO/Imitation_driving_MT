@@ -4,7 +4,7 @@
 CARLA:
   DT: 0.1                                                       # Set to -1 for variable time-step (real-world simulation)
   LANE_WIDTH: 3.5
-  MAX_S: 3000                                                   # [int] max frenet s value available in global route
+  MAX_S: 400                                                   # [int] max frenet s value available in global route
 
 POLICY:
   NAME: PPO2                                                    # DDPG/TRPO/PPO2/A2C

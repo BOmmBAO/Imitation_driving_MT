@@ -472,8 +472,8 @@ class CarlaEnv(gym.Env):
                 *********************************************** Motion Planner *******************************************************
                 **********************************************************************************************************************
         """
-
-        speed, acc = self._get_velocity()
+        temp = [self.ego.get_velocity(), self.ego.get_acceleration()]
+        init_speed = speed, acc = self._get_velocity()
         psi = math.radians(self.ego.get_transform().rotation.yaw)
         ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, self.max_s]
         fpath, self.lanechange, off_the_road = self.motionPlanner.run_step_single_path(ego_state, self.f_idx,
@@ -495,8 +495,7 @@ class CarlaEnv(gym.Env):
         # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
         loop_counter = 0
 
-        while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
-                                          loop_counter < self.loop_break or self.lanechange):
+        while self.f_idx < wps_to_go and elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 and loop_counter < self.loop_break and (not self.lanechange):
 
             loop_counter += 1
             ego_state = [self.ego.get_location().x, self.ego.get_location().y,
@@ -525,9 +524,6 @@ class CarlaEnv(gym.Env):
                     self.world_module.points_to_draw['path wp {}'.format(i)] = [
                         carla.Location(x=fpath.x[i], y=fpath.y[i]),
                         'COLOR_ALUMINIUM_0']
-                self.world_module.points_to_draw['ego'] = [self.ego.get_location(), 'COLOR_SCARLET_RED_0']
-                self.world_module.points_to_draw['waypoint ahead'] = carla.Location(x=cmdWP[0], y=cmdWP[1])
-                self.world_module.points_to_draw['waypoint ahead 2'] = carla.Location(x=cmdWP2[0], y=cmdWP2[1])
 
             """
                     **********************************************************************************************************************
@@ -538,6 +534,9 @@ class CarlaEnv(gym.Env):
             # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
             #                                              carla.Rotation(pitch=-90)))
             self.module_manager.tick()  # Update carla world
+            self.hud.tick()
+            self.hud.render()
+            self.world_module.render()
 
             collision_hist = self.world_module.get_collision_history()
 
@@ -770,9 +769,9 @@ class CarlaEnv(gym.Env):
         return delta_yaw, wpt_yaw
     def _get_velocity(self):
         _v = self.ego.get_velocity()
-        ego_velocity = np.array([_v.x, _v.y])
+        ego_velocity = np.array([_v.x, _v.y, _v.z])
         _acc = self.ego.get_acceleration()
-        ego_acc = np.array([_acc.x, _acc.y])
+        ego_acc = np.array([_acc.x, _acc.y, _acc.z])
         v = np.linalg.norm(ego_velocity)
         acc = np.linalg.norm(ego_acc)
         return v, acc
