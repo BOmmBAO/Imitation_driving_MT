@@ -1,5 +1,6 @@
 import os
 import git
+import pygame
 import gym
 import carla_gym
 import inspect
@@ -31,6 +32,11 @@ from config import cfg, log_config_to_file, cfg_from_list, cfg_from_yaml_file
 
 def parse_args_cfgs():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--res',
+        metavar='WIDTHxHEIGHT',
+        default='1280x720',
+        help='window resolution (default: 1280x720)')
     parser.add_argument(
         '--rolename',
         metavar='NAME',
@@ -84,7 +90,7 @@ if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
     #env = CarlaEnv(args)
-    env = Carla_e2e(args)
+    env = CarlaEnv(args)
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------

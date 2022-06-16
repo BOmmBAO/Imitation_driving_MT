@@ -29,15 +29,9 @@ TENSOR_ROW_NAMES = ['EGO', 'LEADING', 'FOLLOWING', 'LEFT', 'LEFT_UP', 'LEFT_DOWN
 
 
 class CarlaEnv(gym.Env):
-    ROAD_FEATURES = dict(space=spaces.Box(low=0.0, high=1.0, shape=(1,96)), default=np.zeros(shape=1, dtype=np.float32))
-    VEHICLE_FEATURES = dict(space=spaces.Box(low=0.0, high=1.0, shape=(4,)),
-                            default=np.zeros(shape=4, dtype=np.float32))
-    ACTOR_FEATURES = dict(space=spaces.Box(low=-1, high=1, shape=(4 + 1, 15)), efault=np.zeros(shape=(5, 15), dtype=np.float32))
-
-    NAVIGATION_FEATURES = dict()
 
     def __init__(self, args): #lanes_change=5):
-        self.__version__ = "0.9.12"
+        self.__version__ = "0.9.9"
 
         # simulation
         self.clock = pygame.time.Clock
@@ -104,17 +98,15 @@ class CarlaEnv(gym.Env):
         self.state = np.zeros_like(self.observation_space.sample())
 
         # instances
+
         pygame.init()
         pygame.font.init()
-
         self.client = carla.Client(self.args.carla_host, self.args.carla_port)
-        self.client.set_timeout(10.0)
-        self.width, self.height = [int(x) for x in args.carla_res.split('x')]
+        self.client.set_timeout(3.0)
+        self.width, self.height = [int(x) for x in args.res.split('x')]
         self.display = pygame.display.set_mode(
             (self.width, self.height),
             pygame.HWSURFACE | pygame.DOUBLEBUF)
-        pygame.display.set_caption('Pygame carla_decision')
-        self.auto_render = True
         self.hud = HUD(self.width, self.height)
         self.module_manager = ModuleManager()
         self.world_module = ModuleWorld(MODULE_WORLD, args, self.client, module_manager=self.module_manager, hud=self.hud)
@@ -156,7 +148,8 @@ class CarlaEnv(gym.Env):
 
     def _get_global_route(self):
         if self.global_route is None:
-            self.global_route = np.array(self.ego.get_location().x, self.ego.get_location().y, self.ego.get_location().z)
+            self.global_route = np.array([[self.ego.get_location().x, self.ego.get_location().y,
+                                           self.ego.get_location().z]])
             distance = 1
             for i in range(800):
                 wp = self.world_module._map.get_waypoint(self.ego.get_location(),
@@ -480,10 +473,7 @@ class CarlaEnv(gym.Env):
                 **********************************************************************************************************************
         """
 
-        temp = [self.ego.get_velocity(), self.ego.get_acceleration()]
-        init_speed = speed = get_speed(self.ego)
-        acc_vec = self.ego.get_acceleration()
-        acc = math.sqrt(acc_vec.x ** 2 + acc_vec.y ** 2 + acc_vec.z ** 2)
+        speed, acc = self._get_velocity()
         psi = math.radians(self.ego.get_transform().rotation.yaw)
         ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, self.max_s]
         fpath, self.lanechange, off_the_road = self.motionPlanner.run_step_single_path(ego_state, self.f_idx,

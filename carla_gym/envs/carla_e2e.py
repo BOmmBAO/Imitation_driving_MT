@@ -19,7 +19,7 @@ from carla_env.feature import STATUS
 logging.set_verbosity(logging.ERROR)
 class CarlaEnv(gym.Env):
 
-    def __init__(self, step_per_ep, target_v):
+    def __init__(self, step_per_ep=200, target_v=12):
         argparser = argparse.ArgumentParser(description='Carla ArgParser practice')
         argparser.add_argument('--host', metavar='H', default='127.0.0.1', help='IP of the host server')
         argparser.add_argument('-p', '--port', default=2000, type=int, help='TCP port to listen to')

@@ -18,7 +18,7 @@ class SimInit:
 
         self.world = self.client.load_world('Town03')
         self._map = self.world.get_map()
-        self.world.freeze_all_traffic_lights(True)
+        #self.world.freeze_all_traffic_lights(True)
 
         self.original_settings = self.world.get_settings()
         settings = self.world.get_settings()
@@ -51,7 +51,7 @@ class SimInit:
         init_speed = carla.Vector3D(
             x=self.desired_speed * np.cos(yaw),
             y=self.desired_speed * np.sin(yaw))
-        self.ego_car.set_target_velocity(init_speed)
+        self.ego_car.set_velocity(init_speed)
         self.world.tick()
         # self.ego_car.apply_control(carla.VehicleControl(throttle=1.0, brake=1.0))
         # time.sleep(4)

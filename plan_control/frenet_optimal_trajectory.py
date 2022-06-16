@@ -15,7 +15,7 @@ Ref:
 import numpy as np
 import copy
 import math
-from agents.local_planner import cubic_spline_planner
+from plan_control.cubic_spline import Spline3D
 from config import cfg
 
 
@@ -238,7 +238,7 @@ class FrenetPlanner:
             wx.append(p[0])
             wy.append(p[1])
             wz.append(p[2])
-        self.csp = cubic_spline_planner.Spline3D(wx, wy, wz)
+        self.csp = Spline3D(wx, wy, wz)
 
     def update_obstacles(self, ob):
         self.ob = ob
