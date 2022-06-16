@@ -1,4 +1,5 @@
 import gym
+import pygame.time
 from gym import spaces
 import time
 import itertools
@@ -9,7 +10,6 @@ from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanne
 from plan_control.controller import VehiclePIDController
 from tools.misc import get_speed
 from plan_control.controller import IntelligentDriverModel
-
 try:
     import numpy as np
     import sys
@@ -40,6 +40,7 @@ class CarlaEnv(gym.Env):
         self.__version__ = "0.9.12"
 
         # simulation
+        self.clock = pygame.time.Clock
         self.args = args
         self.verbosity = args.verbosity
         self.n_step = 0
@@ -105,28 +106,36 @@ class CarlaEnv(gym.Env):
         # instances
         pygame.init()
         pygame.font.init()
+
+        self.client = carla.Client(self.args.carla_host, self.args.carla_port)
+        self.client.set_timeout(10.0)
         self.width, self.height = [int(x) for x in args.carla_res.split('x')]
-        self.hud_module = ModuleHUD(MODULE_HUD, self.width)
+        self.display = pygame.display.set_mode(
+            (self.width, self.height),
+            pygame.HWSURFACE | pygame.DOUBLEBUF)
+        pygame.display.set_caption('Pygame carla_decision')
+        self.auto_render = True
+        self.hud = HUD(self.width, self.height)
         self.module_manager = ModuleManager()
-        self.world_module = ModuleWorld(MODULE_WORLD, args, timeout=10.0, module_manager=self.module_manager, hud=self.hud_module, decision= True)
+        self.world_module = ModuleWorld(MODULE_WORLD, args, self.client, module_manager=self.module_manager, hud=self.hud)
         self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
         self.module_manager.register_module(self.world_module)
         self.module_manager.register_module(self.traffic_module)
 
+        # Start Modules
+        self.ego = self.world_module.hero_actor
         self._get_global_route()
         self.motionPlanner = MotionPlanner()
-
-        # Start Modules
         self.motionPlanner.start(self.global_route)
         self.world_module.update_global_route_csp(self.motionPlanner.csp)
         self.traffic_module.update_global_route_csp(self.motionPlanner.csp)
-        self.module_manager.start_modules()
+        self.traffic_module.start()
 
-        self.ego = self.world_module.hero_actor
         self.ego_los_sensor = self.world_module.los_sensor
         self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
         self.IDM = IntelligentDriverModel(self.ego)
 
+        self.world_module.render(self.display)
         self.module_manager.tick()  # Update carla world
 
         self.init_transform = self.ego.get_transform()  # ego initial transform to recover at each episode
@@ -147,18 +156,16 @@ class CarlaEnv(gym.Env):
 
     def _get_global_route(self):
         if self.global_route is None:
-            self.global_route = np.empty((0, 3))
+            self.global_route = np.array(self.ego.get_location().x, self.ego.get_location().y, self.ego.get_location().z)
             distance = 1
-            for i in range(1520):
-                wp = self.world_module.town_map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
+            for i in range(800):
+                wp = self.world_module._map.get_waypoint(self.ego.get_location(),
                                                              project_to_road=True).next(distance=distance)[0]
-                distance += 2
                 self.global_route = np.append(self.global_route,
                                               [[wp.transform.location.x, wp.transform.location.y,
                                                 wp.transform.location.z]], axis=0)
                 # To visualize point clouds
                 self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
-            np.save('road_maps/global_route_town04', self.global_route)
 
     def get_vehicle_ahead(self, ego_s, ego_d, ego_init_d, ego_target_d):
         """
@@ -458,7 +465,10 @@ class CarlaEnv(gym.Env):
 
     def step(self, action):
         self.n_step += 1
-
+        self.clock.tick_busy_loop(60)
+        self.world_module.tick(self.clock)
+        self.world_module.render(self.display)
+        pygame.display.flip()
         self.actor_enumerated_dict['EGO'] = {'NORM_S': [], 'NORM_D': [], 'S': [], 'D': [], 'SPEED': []}
         if self.verbosity: print('ACTION'.ljust(15), '{:+8.6f}, {:+8.6f}'.format(float(action[0]), float(action[1])))
         if self.is_first_path:  # Episode start is bypassed
@@ -679,6 +689,7 @@ class CarlaEnv(gym.Env):
     def reset(self):
         self.vehicleController.reset()
         self.world_module.reset()
+        self.world_module.render(self.display)
         self.init_s = self.world_module.init_s
         init_d = self.world_module.init_d
         self.traffic_module.reset(self.init_s, init_d)
@@ -723,17 +734,14 @@ class CarlaEnv(gym.Env):
         # for _ in range(5):
         self.module_manager.tick()
         self.ego.set_simulate_physics(enabled=True)
+        self.world_module.tick(self.clock)
+        self.world_module.render(self.display)
+        pygame.display.flip()
         # ----
         # transform = self.ego.get_transform()
         # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
         #                                         carla.Rotation(pitch=-90)))
         return self.state
-
-    def enable_auto_render(self):
-        self.auto_render = True
-
-    def render(self, mode='human'):
-        self.module_manager.render(self.world_module.display)
 
     def destroy(self):
         print('Destroying environment...')
@@ -754,7 +762,7 @@ class CarlaEnv(gym.Env):
         """
         calculate the delta yaw between ego and current waypoint
         """
-        current_wpt = self.world_module.town_map.get_waypoint(location=self.ego.get_location())
+        current_wpt = self.world_module._map.get_waypoint(location=self.ego.get_location())
         if not current_wpt:
             #self.logger.error('Fail to find a waypoint')
             wpt_yaw = self.current_wpt[2] % 360
