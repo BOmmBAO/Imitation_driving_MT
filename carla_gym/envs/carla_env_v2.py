@@ -4,12 +4,17 @@ from gym import spaces
 import time
 import itertools
 from tools.modules import *
+from wrapper import *
 from config import cfg
 from carla_env.misc import *
+from planner import compute_route_waypoints
 from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanner
 from plan_control.controller import VehiclePIDController
 from tools.misc import get_speed
 from plan_control.controller import IntelligentDriverModel
+from enum import Enum
+from collections import deque
+from hud import HUD
 try:
     import numpy as np
     import sys
@@ -25,17 +30,38 @@ MODULE_TRAFFIC = 'TRAFFIC'
 TENSOR_ROW_NAMES = ['EGO', 'LEADING', 'FOLLOWING', 'LEFT', 'LEFT_UP', 'LEFT_DOWN','LLEFT', 'LLEFT_UP', 'LLEFT_DOWN',
                     'RIGHT', 'RIGHT_UP', 'RIGHT_DOWN', 'RRIGHT', 'RRIGHT_UP', 'RRIGHT_DOWN']
 
-
+class RoadOption(Enum):
+    """
+    RoadOption represents the possible topological configurations when moving from a segment of lane to other.
+    """
+    VOID = -1
+    LEFT = 1
+    RIGHT = 2
+    STRAIGHT = 3
+    LANEFOLLOW = 4
+    CHANGELANELEFT = 5
+    CHANGELANERIGHT = 6
 
 
 class CarlaEnv(gym.Env):
-
-    def __init__(self, args): #lanes_change=5):
+    """
+    action smoothing: Scalar used to smooth the incomming action signal for e2e.
+                1.0 = max smoothing, 0.0 = no smoothing
+    """
+    def __init__(self, args, action_smoothing=0.9, synchronous=True, viewer_res=(1280, 720), obs_res=(1280, 720)): #lanes_change=5):
         self.__version__ = "0.9.9"
+        self.args = args
 
+        pygame.init()
+        pygame.font.init()
         # simulation
         self.clock = pygame.time.Clock
-        self.args = args
+        self.width, self.height = [int(x) for x in args.res.split('x')]
+        self.display = pygame.display.set_mode(
+            (self.width, self.height),
+            pygame.HWSURFACE | pygame.DOUBLEBUF)
+        self.clock = pygame.time.Clock()
+        self.synchronous = synchronous
         self.verbosity = args.verbosity
         self.n_step = 0
         # self.global_route = np.load(
@@ -43,10 +69,6 @@ class CarlaEnv(gym.Env):
         self.global_route = None
         self.acceleration_ = 0
         self.eps_rew = 0
-        if float(cfg.CARLA.DT) > 0:
-            self.dt = float(cfg.CARLA.DT)
-        else:
-            self.dt = 0.05
 
         # constraints
         self.targetSpeed = float(cfg.GYM_ENV.TARGET_SPEED)
@@ -57,7 +79,7 @@ class CarlaEnv(gym.Env):
 
         # frenet
         self.f_idx = 0
-        self.init_s = None  # initial frenet s value - will be updated in reset function
+        self.init_s = 0.0  # initial frenet s value - will be updated in reset function
         self.max_s = int(cfg.CARLA.MAX_S)
         self.track_length = int(cfg.GYM_ENV.TRACK_LENGTH)
         self.look_back = int(cfg.GYM_ENV.LOOK_BACK)
@@ -65,11 +87,12 @@ class CarlaEnv(gym.Env):
         self.loop_break = int(cfg.GYM_ENV.LOOP_BREAK)
         self.effective_distance_from_vehicle_ahead = int(cfg.GYM_ENV.DISTN_FRM_VHCL_AHD)
         self.lanechange = False
-        self.is_first_path = True
 
         # RL
         self.w_speed = int(cfg.RL.W_SPEED)
         self.w_r_speed = int(cfg.RL.W_R_SPEED)
+        self.w_r_pos = int(cfg.RL.SIGMA_POS)
+        self.w_r_angle = int(cfg.RL.SIGMA_ANGLE)
 
         self.min_speed_gain = float(cfg.RL.MIN_SPEED_GAIN)
         self.min_speed_loss = float(cfg.RL.MIN_SPEED_LOSS)
@@ -80,391 +103,155 @@ class CarlaEnv(gym.Env):
 
         self.off_the_road_penalty = int(cfg.RL.OFF_THE_ROAD)
         self.collision_penalty = int(cfg.RL.COLLISION)
-
-        if cfg.GYM_ENV.FIXED_REPRESENTATION:
-            self.low_state = np.array([[-1 for _ in range(self.look_back)] for _ in range(16)])
-            self.high_state = np.array([[1 for _ in range(self.look_back)] for _ in range(16)])
-        else:
-            self.low_state = np.array(
-                [[-1 for _ in range(self.look_back)] for _ in range(int(self.N_SPAWN_CARS + 1) * 2 + 1)])
-            self.high_state = np.array(
-                [[1 for _ in range(self.look_back)] for _ in range(int(self.N_SPAWN_CARS + 1) * 2 + 1)])
-
-
-        action_low = np.array([-1, -1])
         action_high = np.array([1, 1])
-        self.action_space = gym.spaces.Box(low=action_low, high=action_high, shape=(2,), dtype=np.float32)
-        # [cn, ..., c1, c0, normalized yaw angle, normalized speed error] => ci: coefficients
-        self.state = np.zeros_like(self.observation_space.sample())
+        self.action_space = gym.spaces.Box(low=-action_high, high=action_high, shape=(2,), dtype=np.float32)
+        self.action_smoothing = action_smoothing #for e2e to
+        self.total_reward = 0.0
+        self.reward = 0.0
 
         # instances
-
-        pygame.init()
-        pygame.font.init()
+        self.dt = float(cfg.CARLA.DT)
         self.client = carla.Client(self.args.carla_host, self.args.carla_port)
         self.client.set_timeout(3.0)
-        self.width, self.height = [int(x) for x in args.res.split('x')]
-        self.display = pygame.display.set_mode(
-            (self.width, self.height),
-            pygame.HWSURFACE | pygame.DOUBLEBUF)
+        self.world = World(self.args, self.client)
+        if self.synchronous:
+            settings = self.world.get_settings()
+            settings.synchronous_mode = True
+            self.world.apply_settings(settings)
+        lap_start_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[1].location)
+        spawn_transform = lap_start_wp.transform
+        spawn_transform.location += carla.Location(z=1.0)
+        self.ego = Hero_Actor(self.world, spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
+                                   on_invasion_fn=lambda e: self._on_invasion(e))
+
         self.hud = HUD(self.width, self.height)
-        self.module_manager = ModuleManager()
-        self.world_module = ModuleWorld(MODULE_WORLD, args, self.client, module_manager=self.module_manager, hud=self.hud)
-        self.traffic_module = TrafficManager(MODULE_TRAFFIC, module_manager=self.module_manager)
-        self.module_manager.register_module(self.world_module)
-        self.module_manager.register_module(self.traffic_module)
+        self.hud.set_vehicle(self.ego)
+        self.world.on_tick(self.hud.on_world_tick)
+
+        # Create cameras
+        out_width, out_height = obs_res
+        width, height = viewer_res
+        self.camera = Camera(self.world, width, height,
+                             transform=camera_transforms["spectator"],
+                             attach_to=self.ego, on_recv_image=lambda e: self._set_viewer_image(e),
+                             sensor_tick=0.0 if self.synchronous else 1.0 / 30.0)
 
         # Start Modules
-        self.ego = self.world_module.hero_actor
-        self._get_global_route()
+        # Generate waypoints along the lap
+        self.route_waypoints, self.global_route = compute_route_waypoints(self.world.map, lap_start_wp, lap_start_wp, resolution=3.0,
+                                                       plan=[RoadOption.STRAIGHT] + [RoadOption.RIGHT] * 2 + [
+                                                           RoadOption.STRAIGHT] * 5)
+        #self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
+        self.current_waypoint_index = 0
+        self.checkpoint_waypoint_index = 0
         self.motionPlanner = MotionPlanner()
         self.motionPlanner.start(self.global_route)
-        self.world_module.update_global_route_csp(self.motionPlanner.csp)
-        self.traffic_module.update_global_route_csp(self.motionPlanner.csp)
-        self.traffic_module.start()
-
-        self.ego_los_sensor = self.world_module.los_sensor
-        self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
-        self.IDM = IntelligentDriverModel(self.ego)
-
-        self.world_module.render(self.display)
-        self.module_manager.tick()  # Update carla world
-
-        self.init_transform = self.ego.get_transform()  # ego initial transform to recover at each episode
-        #self.spectator = self.world_module.spectator
-
-
-
-        """
-        ['EGO', 'LEADING', 'FOLLOWING', 'LEFT', 'LEFT_UP', 'LEFT_DOWN', 'LLEFT', 'LLEFT_UP',
-        'LLEFT_DOWN', 'RIGHT', 'RIGHT_UP', 'RIGHT_DOWN', 'RRIGHT', 'RRIGHT_UP', 'RRIGHT_DOWN']
-        """
+        self.ego.update_global_route_csp(self.motionPlanner.csp)
+        self.ego_los_sensor = self.ego.los_sensor
+        self.vehicleController = VehiclePIDController(self.ego.actor, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
+        self.IDM = IntelligentDriverModel(self.ego.actor)
         self.actor_enumerated_dict = {}
-        self.actor_enumeration = []
-        self.side_window = 5  # times 2 to make adjacent window
+        self.map_image = MapImage(
+            carla_world=self.world,
+            carla_map=self.world.map,
+            pixels_per_meter=12,
+            show_triggers=False,
+            show_connections=False,
+            show_spawn_points=False)
+        self.actors_surface = pygame.Surface(
+            (self.map_image.surface.get_width(), self.map_image.surface.get_height()))
+        self.reset()
 
-
-
-
-    def _get_global_route(self):
-        if self.global_route is None:
-            self.global_route = np.empty((0, 3))
-            # self.global_route = np.array([[self.ego.get_location().x, self.ego.get_location().y,
-            #                                self.ego.get_location().z]])
-            distance = 1
-            for i in range(800):
-                wp = self.world_module._map.get_waypoint(self.ego.get_location(),
-                                                             project_to_road=True).next(distance=distance)[0]
-                self.global_route = np.append(self.global_route,
-                                              [[wp.transform.location.x, wp.transform.location.y,
-                                                wp.transform.location.z]], axis=0)
-                # To visualize point clouds
-                self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
-
-    def get_vehicle_ahead(self, ego_s, ego_d, ego_init_d, ego_target_d):
-        """
-        This function returns the values for the leading actor in front of the ego vehicle. When there is lane-change
-        it is important to consider actor in the current lane and target lane. If leading actor in the current lane is
-        too close than it is considered to be vehicle_ahead other wise target lane is prioritized.
-        """
-
-        distance = self.effective_distance_from_vehicle_ahead
-        others_s = [0 for _ in range(self.N_SPAWN_CARS)]
-        others_d = [0 for _ in range(self.N_SPAWN_CARS)]
-        for i, actor in enumerate(self.traffic_module.actors_batch):
-            act_s, act_d = actor['Frenet State'][0][-1], actor['Frenet State'][1]
-            others_s[i] = act_s
-            others_d[i] = act_d
-
-        init_lane_d_idx = \
-            np.where((abs(np.array(others_d) - ego_d) < 1.75) * (abs(np.array(others_d) - ego_init_d) < 1))[0]
-
-        init_lane_strict_d_idx = \
-            np.where((abs(np.array(others_d) - ego_d) < 0.4) * (abs(np.array(others_d) - ego_init_d) < 1))[0]
-
-        target_lane_d_idx = \
-            np.where((abs(np.array(others_d) - ego_d) < 3.3) * (abs(np.array(others_d) - ego_target_d) < 1))[0]
-
-        if len(init_lane_d_idx) and len(target_lane_d_idx) == 0:
-            return None  # no vehicle ahead
+    def reset(self, is_training=True):
+        self.ego.collision_sensor.reset()
+        self.is_first_path = True
+        self.total_reward = 0.0
+        self.reward = 0.0
+        self.ego.control.steer = float(0.0)
+        self.ego.control.throttle = float(0.0)
+        # self.vehicle.control.brake = float(0.0)
+        self.ego.tick()
+        if is_training:
+            # Teleport vehicle to last checkpoint
+            waypoint, _ = self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)]
+            self.current_waypoint_index = self.checkpoint_waypoint_index
         else:
-            init_lane_s = np.array(others_s)[init_lane_d_idx]
-            init_s_idx = np.concatenate(
-                (np.array(init_lane_d_idx).reshape(-1, 1), (init_lane_s - ego_s).reshape(-1, 1),)
-                , axis=1)
-            sorted_init_s_idx = init_s_idx[init_s_idx[:, 1].argsort()]
-
-            init_lane_strict_s = np.array(others_s)[init_lane_strict_d_idx]
-            init_strict_s_idx = np.concatenate(
-                (np.array(init_lane_strict_d_idx).reshape(-1, 1), (init_lane_strict_s - ego_s).reshape(-1, 1),)
-                , axis=1)
-            sorted_init_strict_s_idx = init_strict_s_idx[init_strict_s_idx[:, 1].argsort()]
-
-            target_lane_s = np.array(others_s)[target_lane_d_idx]
-            target_s_idx = np.concatenate((np.array(target_lane_d_idx).reshape(-1, 1),
-                                           (target_lane_s - ego_s).reshape(-1, 1),), axis=1)
-            sorted_target_s_idx = target_s_idx[target_s_idx[:, 1].argsort()]
-
-            if any(sorted_init_s_idx[:, 1][sorted_init_s_idx[:, 1] <= 10] > 0):
-                vehicle_ahead_idx = int(sorted_init_s_idx[:, 0][sorted_init_s_idx[:, 1] > 0][0])
-            elif any(sorted_init_strict_s_idx[:, 1][sorted_init_strict_s_idx[:, 1] <= distance] > 0):
-                vehicle_ahead_idx = int(sorted_init_strict_s_idx[:, 0][sorted_init_strict_s_idx[:, 1] > 0][0])
-            elif any(sorted_target_s_idx[:, 1][sorted_target_s_idx[:, 1] <= distance] > 0):
-                vehicle_ahead_idx = int(sorted_target_s_idx[:, 0][sorted_target_s_idx[:, 1] > 0][0])
-            else:
-                return None
-
-            # print(others_s[vehicle_ahead_idx] - ego_s, others_d[vehicle_ahead_idx], ego_d)
-
-            return self.traffic_module.actors_batch[vehicle_ahead_idx]['Actor']
-
-    def enumerate_actors(self):
-        """
-        Given the traffic actors and ego_state this fucntion enumerate actors, calculates their relative positions with
-        to ego and assign them to actor_enumerated_dict.
-        Keys to be updated: ['LEADING', 'FOLLOWING', 'LEFT', 'LEFT_UP', 'LEFT_DOWN', 'LLEFT', 'LLEFT_UP',
-        'LLEFT_DOWN', 'RIGHT', 'RIGHT_UP', 'RIGHT_DOWN', 'RRIGHT', 'RRIGHT_UP', 'RRIGHT_DOWN']
-        """
-
-        self.actor_enumeration = []
-        ego_s = self.actor_enumerated_dict['EGO']['S'][-1]
-        ego_d = self.actor_enumerated_dict['EGO']['D'][-1]
-
-        others_s = [0 for _ in range(self.N_SPAWN_CARS)]
-        others_d = [0 for _ in range(self.N_SPAWN_CARS)]
-        others_id = [0 for _ in range(self.N_SPAWN_CARS)]
-        for i, actor in enumerate(self.traffic_module.actors_batch):
-            act_s, act_d = actor['Frenet State']
-            others_s[i] = act_s[-1]
-            others_d[i] = act_d
-            others_id[i] = actor['Actor'].id
-
-        def append_actor(x_lane_d_idx, actor_names=None):
-            # actor names example: ['left', 'leftUp', 'leftDown']
-            x_lane_s = np.array(others_s)[x_lane_d_idx]
-            x_lane_id = np.array(others_id)[x_lane_d_idx]
-            s_idx = np.concatenate((np.array(x_lane_d_idx).reshape(-1, 1), (x_lane_s - ego_s).reshape(-1, 1),
-                                    x_lane_id.reshape(-1, 1)), axis=1)
-            sorted_s_idx = s_idx[s_idx[:, 1].argsort()]
-
-            self.actor_enumeration.append(
-                others_id[int(sorted_s_idx[:, 0][abs(sorted_s_idx[:, 1]) < self.side_window][0])] if (
-                    any(abs(
-                        sorted_s_idx[:, 1][abs(sorted_s_idx[:, 1]) <= self.side_window]) >= -self.side_window)) else -1)
-
-            self.actor_enumeration.append(
-                others_id[int(sorted_s_idx[:, 0][sorted_s_idx[:, 1] > self.side_window][0])] if (
-                    any(sorted_s_idx[:, 1][sorted_s_idx[:, 1] > 0] > self.side_window)) else -1)
-
-            self.actor_enumeration.append(
-                others_id[int(sorted_s_idx[:, 0][sorted_s_idx[:, 1] < -self.side_window][-1])] if (
-                    any(sorted_s_idx[:, 1][sorted_s_idx[:, 1] < 0] < -self.side_window)) else -1)
-
-        # --------------------------------------------- ego lane -------------------------------------------------
-        same_lane_d_idx = np.where(abs(np.array(others_d) - ego_d) < 1)[0]
-        if len(same_lane_d_idx) == 0:
-            self.actor_enumeration.append(-2)
-            self.actor_enumeration.append(-2)
-
+            # Teleport vehicle to start of track
+            waypoint, _ = self.route_waypoints[0]
+            self.current_waypoint_index = 0
+        transform = waypoint.transform
+        transform.location += carla.Location(z=1.0)
+        self.ego.set_transform(transform)
+        self.ego.set_simulate_physics(False)  # Reset the car's physics
+        self.ego.set_simulate_physics(True)
+        self.vehicleController.reset()
+        self.motionPlanner.reset(0.0, 0.0, df_n=0, Tf=4, Vf_n=0, optimal_path=False)
+        self.f_idx = 0
+        if self.synchronous:
+            ticks = 0
+            while ticks < self.world.fps * 2:
+                self.world.tick()
+                try:
+                    self.world.wait_for_tick(seconds=1.0 / self.world.fps + 0.1)
+                    ticks += 1
+                except:
+                    pass
         else:
-            same_lane_s = np.array(others_s)[same_lane_d_idx]
-            same_lane_id = np.array(others_id)[same_lane_d_idx]
-            same_s_idx = np.concatenate((np.array(same_lane_d_idx).reshape(-1, 1), (same_lane_s - ego_s).reshape(-1, 1),
-                                         same_lane_id.reshape(-1, 1)), axis=1)
-            sorted_same_s_idx = same_s_idx[same_s_idx[:, 1].argsort()]
-            self.actor_enumeration.append(others_id[int(sorted_same_s_idx[:, 0][sorted_same_s_idx[:, 1] > 0][0])]
-                                          if (any(sorted_same_s_idx[:, 1] > 0)) else -1)
-            self.actor_enumeration.append(others_id[int(sorted_same_s_idx[:, 0][sorted_same_s_idx[:, 1] < 0][-1])]
-                                          if (any(sorted_same_s_idx[:, 1] < 0)) else -1)
+            time.sleep(2.0)
+        self.terminal_state = False  # Set to True when we want to end episode
+        self.closed = False  # Set to True when ESC is pressed
+        self.extra_info = []  # List of extra info shown on the HUD
+        self.viewer_image = self.viewer_image_buffer = None  # Last received image to show in the viewer
+        self.start_t = time.time()
+        self.step_count = 0
+        self.is_training = is_training
+        self.start_waypoint_index = self.current_waypoint_index
 
-        # --------------------------------------------- left lane -------------------------------------------------
-        left_lane_d_idx = np.where(((np.array(others_d) - ego_d) < -3) * ((np.array(others_d) - ego_d) > -4))[0]
-        if ego_d < -1.75:
-            self.actor_enumeration += [-2, -2, -2]
+        # Metrics
+        self.total_reward = 0.0
+        self.previous_location = self.ego.get_transform().location
+        self.distance_traveled = 0.0
+        self.center_lane_deviation = 0.0
+        self.speed_accum = 0.0
+        self.laps_completed = 0.0
+        actors_norm_s_d = []  # relative frenet consecutive s and d values wrt ego
+        init_norm_d = round((0.0 + self.LANE_WIDTH) / (3 * self.LANE_WIDTH), 2)
+        ego_s_list = [0.0 for _ in range(self.look_back)]
+        ego_d_list = [0.0 for _ in range(self.look_back)]
 
-        elif len(left_lane_d_idx) == 0:
-            self.actor_enumeration += [-1, -1, -1]
+        self.actor_enumerated_dict['EGO'] = {'NORM_S': [0], 'NORM_D': [init_norm_d],
+                                             'S': ego_s_list, 'D': ego_d_list, 'SPEED': [0]}
 
-        else:
-            append_actor(left_lane_d_idx)
+        self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
+        self.fea_ext.update()
+        # DEBUG: Draw path
+        # self._draw_path(life_time=1000.0, skip=10)
+        return self._get_obs(), self.reward, self.terminal_state, {'reserved': 0}
 
-        # ------------------------------------------- two left lane -----------------------------------------------
-        lleft_lane_d_idx = np.where(((np.array(others_d) - ego_d) < -6.5) * ((np.array(others_d) - ego_d) > -7.5))[0]
+    def _set_viewer_image(self, image):
+        self.viewer_image_buffer = image
 
-        if ego_d < 1.75:
-            self.actor_enumeration += [-2, -2, -2]
+    def _get_viewer_image(self):
+        while self.viewer_image_buffer is None:
+            pass
+        image = self.viewer_image_buffer.copy()
+        self.viewer_image_buffer = None
+        return image
 
-        elif len(lleft_lane_d_idx) == 0:
-            self.actor_enumeration += [-1, -1, -1]
-
-        else:
-            append_actor(lleft_lane_d_idx)
-
-            # ---------------------------------------------- rigth lane --------------------------------------------------
-        right_lane_d_idx = np.where(((np.array(others_d) - ego_d) > 3) * ((np.array(others_d) - ego_d) < 4))[0]
-        if ego_d > 5.25:
-            self.actor_enumeration += [-2, -2, -2]
-
-        elif len(right_lane_d_idx) == 0:
-            self.actor_enumeration += [-1, -1, -1]
-
-        else:
-            append_actor(right_lane_d_idx)
-
-        # ------------------------------------------- two rigth lane --------------------------------------------------
-        rright_lane_d_idx = np.where(((np.array(others_d) - ego_d) > 6.5) * ((np.array(others_d) - ego_d) < 7.5))[0]
-        if ego_d > 1.75:
-            self.actor_enumeration += [-2, -2, -2]
-
-        elif len(rright_lane_d_idx) == 0:
-            self.actor_enumeration += [-1, -1, -1]
-
-        else:
-            append_actor(rright_lane_d_idx)
-
-        # Fill enumerated actor values
-
-        actor_id_s_d = {}
-        norm_s = []
-        # norm_d = []
-        for actor in self.traffic_module.actors_batch:
-            actor_id_s_d[actor['Actor'].id] = actor['Frenet State']
-
-        for i, actor_id in enumerate(self.actor_enumeration):
-            if actor_id >= 0:
-                actor_norm_s = []
-                act_s_hist, act_d = actor_id_s_d[actor_id]  # act_s_hist:list act_d:float
-                for act_s, ego_s in zip(list(act_s_hist)[-self.look_back:],
-                                        self.actor_enumerated_dict['EGO']['S'][-self.look_back:]):
-                    actor_norm_s.append((act_s - ego_s) / self.max_s)
-                norm_s.append(actor_norm_s)
-            #    norm_d[i] = (act_d - ego_d) / (3 * self.LANE_WIDTH)
-            # -1:empty lane, -2:no lane
-            else:
-                norm_s.append(actor_id)
-
-        # How to fill actor_s when there is no lane or lane is empty. relative_norm_s to ego vehicle
-        emp_ln_max = 0.03
-        emp_ln_min = -0.03
-        no_ln_down = -0.03
-        no_ln_up = 0.004
-        no_ln = 0.001
-
-        if norm_s[0] not in (-1, -2):
-            self.actor_enumerated_dict['LEADING'] = {'S': norm_s[0]}
-        else:
-            self.actor_enumerated_dict['LEADING'] = {'S': [emp_ln_max]}
-
-        if norm_s[1] not in (-1, -2):
-            self.actor_enumerated_dict['FOLLOWING'] = {'S': norm_s[1]}
-        else:
-            self.actor_enumerated_dict['FOLLOWING'] = {'S': [emp_ln_min]}
-
-        if norm_s[2] not in (-1, -2):
-            self.actor_enumerated_dict['LEFT'] = {'S': norm_s[2]}
-        else:
-            self.actor_enumerated_dict['LEFT'] = {'S': [emp_ln_min] if norm_s[2] == -1 else [no_ln]}
-
-        if norm_s[3] not in (-1, -2):
-            self.actor_enumerated_dict['LEFT_UP'] = {'S': norm_s[3]}
-        else:
-            self.actor_enumerated_dict['LEFT_UP'] = {'S': [emp_ln_max] if norm_s[3] == -1 else [no_ln_up]}
-
-        if norm_s[4] not in (-1, -2):
-            self.actor_enumerated_dict['LEFT_DOWN'] = {'S': norm_s[4]}
-        else:
-            self.actor_enumerated_dict['LEFT_DOWN'] = {'S': [emp_ln_min] if norm_s[4] == -1 else [no_ln_down]}
-
-        if norm_s[5] not in (-1, -2):
-            self.actor_enumerated_dict['LLEFT'] = {'S': norm_s[5]}
-        else:
-            self.actor_enumerated_dict['LLEFT'] = {'S': [emp_ln_min] if norm_s[5] == -1 else [no_ln]}
-
-        if norm_s[6] not in (-1, -2):
-            self.actor_enumerated_dict['LLEFT_UP'] = {'S': norm_s[6]}
-        else:
-            self.actor_enumerated_dict['LLEFT_UP'] = {'S': [emp_ln_max] if norm_s[6] == -1 else [no_ln_up]}
-
-        if norm_s[7] not in (-1, -2):
-            self.actor_enumerated_dict['LLEFT_DOWN'] = {'S': norm_s[7]}
-        else:
-            self.actor_enumerated_dict['LLEFT_DOWN'] = {'S': [emp_ln_min] if norm_s[7] == -1 else [no_ln_down]}
-
-        if norm_s[8] not in (-1, -2):
-            self.actor_enumerated_dict['RIGHT'] = {'S': norm_s[8]}
-        else:
-            self.actor_enumerated_dict['RIGHT'] = {'S': [emp_ln_min] if norm_s[8] == -1 else [no_ln]}
-
-        if norm_s[9] not in (-1, -2):
-            self.actor_enumerated_dict['RIGHT_UP'] = {'S': norm_s[9]}
-        else:
-            self.actor_enumerated_dict['RIGHT_UP'] = {'S': [emp_ln_max] if norm_s[9] == -1 else [no_ln_up]}
-
-        if norm_s[10] not in (-1, -2):
-            self.actor_enumerated_dict['RIGHT_DOWN'] = {'S': norm_s[10]}
-        else:
-            self.actor_enumerated_dict['RIGHT_DOWN'] = {'S': [emp_ln_min] if norm_s[10] == -1 else [no_ln_down]}
-
-        if norm_s[11] not in (-1, -2):
-            self.actor_enumerated_dict['RRIGHT'] = {'S': norm_s[11]}
-        else:
-            self.actor_enumerated_dict['RRIGHT'] = {'S': [emp_ln_min] if norm_s[11] == -1 else [no_ln]}
-
-        if norm_s[12] not in (-1, -2):
-            self.actor_enumerated_dict['RRIGHT_UP'] = {'S': norm_s[12]}
-        else:
-            self.actor_enumerated_dict['RRIGHT_UP'] = {'S': [emp_ln_max] if norm_s[12] == -1 else [no_ln_up]}
-
-        if norm_s[13] not in (-1, -2):
-            self.actor_enumerated_dict['RRIGHT_DOWN'] = {'S': norm_s[13]}
-        else:
-            self.actor_enumerated_dict['RRIGHT_DOWN'] = {'S': [emp_ln_min] if norm_s[13] == -1 else [no_ln_down]}
-
-    def fix_representation(self):
-        """
-        Given the traffic actors fill the desired tensor with appropriate values and time_steps
-        """
-        # self.enumerate_actors()
-        #
-        # self.actor_enumerated_dict['EGO']['SPEED'].extend(self.actor_enumerated_dict['EGO']['SPEED'][-1]
-        #                                                   for _ in range(
-        #     self.look_back - len(self.actor_enumerated_dict['EGO']['NORM_D'])))
-        #
-        # for act_values in self.actor_enumerated_dict.values():
-        #     act_values['S'].extend(act_values['S'][-1] for _ in range(self.look_back - len(act_values['S'])))
-        #
-        # _range = np.arange(-self.look_back, -1, int(np.ceil(self.look_back / self.time_step)),
-        #                    dtype=int)  # add last observation
-        # _range = np.append(_range, -1)
-        #
-        # lstm_obs = np.concatenate((np.array(self.actor_enumerated_dict['EGO']['SPEED'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEADING']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['FOLLOWING']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEFT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEFT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LEFT_DOWN']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LLEFT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LLEFT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['LLEFT_DOWN']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RIGHT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RIGHT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RIGHT_DOWN']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RRIGHT']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RRIGHT_UP']['S'])[_range],
-        #                            np.array(self.actor_enumerated_dict['RRIGHT_DOWN']['S'])[_range]),
-        #                           axis=0)
-        lstm_obs = np.zeros((15,5))
-
-        return lstm_obs.reshape(15, -1).transpose()  # state
 
     def step(self, action):
-        self.n_step += 1
-        self.clock.tick_busy_loop(60)
-        self.world_module.tick(self.clock)
-        self.world_module.render(self.display)
-        pygame.display.flip()
+        if self.closed:
+            raise Exception("CarlaEnv.step() called after the environment was closed." +
+                            "Check for info[\"closed\"] == True in the learning loop.")
+            # Asynchronous update logic
+        if not self.synchronous:
+            if self.world.fps <= 0:
+                # Go as fast as possible
+                self.clock.tick()
+            else:
+                # Sleep to keep a steady fps
+                self.clock.tick_busy_loop(self.world.fps)
         self.actor_enumerated_dict['EGO'] = {'NORM_S': [], 'NORM_D': [], 'S': [], 'D': [], 'SPEED': []}
-        if self.verbosity: print('ACTION'.ljust(15), '{:+8.6f}, {:+8.6f}'.format(float(action[0]), float(action[1])))
         if self.is_first_path:  # Episode start is bypassed
             action = [0, -1]
             self.is_first_path = False
@@ -496,7 +283,8 @@ class CarlaEnv(gym.Env):
         # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
         loop_counter = 0
 
-        while self.f_idx < wps_to_go and elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 and loop_counter < self.loop_break and (not self.lanechange):
+        while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
+                                          loop_counter < self.loop_break or self.lanechange):
 
             loop_counter += 1
             ego_state = [self.ego.get_location().x, self.ego.get_location().y,
@@ -509,8 +297,8 @@ class CarlaEnv(gym.Env):
             # overwrite command speed using IDM
             ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
             ego_d = fpath.d[self.f_idx]
-            vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
-            cmdSpeed = self.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=vehicle_ahead)
+            #vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
+            cmdSpeed = self.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=None)
 
             # control = self.vehicleController.run_step(cmdSpeed, cmdWP)  # calculate control
             control = self.vehicleController.run_step_2_wp(cmdSpeed, cmdWP, cmdWP2)  # calculate control
@@ -520,11 +308,19 @@ class CarlaEnv(gym.Env):
                     *********************************************** Draw Waypoints *******************************************************
                     **********************************************************************************************************************
             """
-            if self.world_module.args.play_mode != 0:
-                for i in range(len(fpath.t)):
-                    self.world_module.points_to_draw['path wp {}'.format(i)] = [
-                        carla.Location(x=fpath.x[i], y=fpath.y[i]),
-                        'COLOR_ALUMINIUM_0']
+            for i in range(len(fpath.t)):
+                self.ego.points_to_draw['path wp {}'.format(i)] = [
+                    carla.Location(x=fpath.x[i], y=fpath.y[i]),
+                    'COLOR_ALUMINIUM_0']
+            for name, val in self.ego.points_to_draw.items():
+                if isinstance(val, list):
+                    location = val[0]
+                    color = val[1]
+                else:
+                    location = val
+                    color = 'COLOR_ORANGE_0'
+                center = self.map_image.world_to_pixel(location)
+                pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
 
             """
                     **********************************************************************************************************************
@@ -534,26 +330,11 @@ class CarlaEnv(gym.Env):
             # transform = self.ego.get_transform()
             # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
             #                                              carla.Rotation(pitch=-90)))
-            self.module_manager.tick()  # Update carla world
-            self.hud.tick()
-            self.hud.render()
-            self.world_module.render()
-
-            collision_hist = self.world_module.get_collision_history()
-
-            self.actor_enumerated_dict['EGO']['S'].append(ego_s)
-            self.actor_enumerated_dict['EGO']['D'].append(ego_d)
-            self.actor_enumerated_dict['EGO']['NORM_S'].append((ego_s - self.init_s) / self.track_length)
-            self.actor_enumerated_dict['EGO']['NORM_D'].append(
-                round((ego_d + self.LANE_WIDTH) / (3 * self.LANE_WIDTH), 2))
             last_speed = get_speed(self.ego)
             self.actor_enumerated_dict['EGO']['SPEED'].append(last_speed / self.maxSpeed)
             # if ego off-the road or collided
-            if any(collision_hist):
-                collision = True
-                break
-            self._get_global_route()
-            self.world_module.update_global_route_csp(self.motionPlanner.csp)
+            self.hud.tick(self.world, self.clock)
+            self.world.tick()
 
             # distance_traveled = ego_s - self.init_s
             # if distance_traveled < -5:
@@ -567,19 +348,6 @@ class CarlaEnv(gym.Env):
                 *********************************************************************************************************************
         """
         self.fea_ext.update()
-        features = self.fea_ext.observation
-        if cfg.GYM_ENV.FIXED_REPRESENTATION:
-            cars_info = self.fix_representation()
-            cars_info_fla = cars_info.flatten()
-            self.state = np.concatenate((cars_info_fla,features))
-            print("len:", len(self.state))
-            if self.verbosity == 2:
-                print(3 * '---EPS UPDATE---')
-                print(TENSOR_ROW_NAMES[0].ljust(15),
-                      #      '{:+8.6f}  {:+8.6f}'.format(self.state[-1][1], self.state[-1][0]))
-                      '{:+8.6f}'.format(cars_info[-1][0]))
-                for idx in range(1, cars_info.shape[1]):
-                    print(TENSOR_ROW_NAMES[idx].ljust(15), '{:+8.6f}'.format(cars_info[-1][idx]))
         """
                 **********************************************************************************************************************
                 ********************************************* RL Reward Function *****************************************************
@@ -590,13 +358,13 @@ class CarlaEnv(gym.Env):
         print(last_speed)
         #speed reward
         e_speed = abs(self.targetSpeed - last_speed)
-        r_speed = self.w_r_speed * np.exp(-e_speed ** 2 / self.maxSpeed * self.w_speed)  # 0<= r_speed <= self.w_r_speed
+        r_speed = np.exp(-e_speed ** 2 / 2 / (0.1*self.w_r_speed * 0.1 * self.w_speed))  # 0<= r_speed <= self.w_r_speed
         #  first two path speed change increases regardless so we penalize it differently
 
         spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
         r_laneChange = 0
 
-        if self.lanechange and spd_change_percentage < self.min_speed_gain:
+        if self.lanechange and spd_change_percentage < self.min_speed_gain:   # unmeaningful lanechange
             r_laneChange = -1 * r_speed * self.lane_change_penalty  # <= 0
 
         elif self.lanechange:
@@ -606,6 +374,8 @@ class CarlaEnv(gym.Env):
         negatives = r_laneChange
 
         # sigma_pos = 0.3
+        _, self.current_road_maneuver = self.route_waypoints[self.current_waypoint_index % len(self.route_waypoints)]
+        _, self.next_road_maneuver = self.route_waypoints[(self.current_waypoint_index + 1) % len(self.route_waypoints)]
         sigma_pos = self.sigma_pos
         delta_yaw, wpt_yaw = self._get_delta_yaw()
         road_heading = np.array([
@@ -613,8 +383,9 @@ class CarlaEnv(gym.Env):
             np.sin(wpt_yaw / 180 * np.pi)
         ])
         pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
-        lateral_dist = np.linalg.norm(pos_err_vec) * np.sign(
-            pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]) / self.LANE_WIDTH
+        self.distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
+            pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
+        lateral_dist = self.distance_traveled / self.LANE_WIDTH
         track_rewd = np.exp(-np.power(lateral_dist, 2) / 2 / sigma_pos / sigma_pos)
         print("_track", track_rewd)
 
@@ -626,7 +397,7 @@ class CarlaEnv(gym.Env):
         print("_ang", ang_rewd)
 
 
-        reward = positives + negatives + track_rewd + ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
+        self.reward = positives + negatives + track_rewd + ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
         # print(self.n_step, self.eps_rew)
         print("reward:", positives, negatives)
         """
@@ -634,127 +405,110 @@ class CarlaEnv(gym.Env):
                       ********************************************* Episode Termination ****************************************************
                       **********************************************************************************************************************
               """
+        self.center_lane_deviation += self.distance_from_center
+        transform = self.ego.get_transform()
+        self.distance_traveled += self.previous_location.distance(transform.location)
+        self.previous_location = transform.location
+        self.speed_accum += self.ego.get_speed()
+        # Get lap count
+        self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
+        if self.laps_completed >= 3:
+            # End after 3 laps
+            self.terminal_state = True
 
-        done = False
-        if collision:
+        # Update checkpoint for training
+        if self.is_training:
+            checkpoint_frequency = 50  # Checkpoint frequency in meters
+            self.checkpoint_waypoint_index = (
+                                                         self.current_waypoint_index // checkpoint_frequency) * checkpoint_frequency
+        if any(self.ego.collision_sensor.history):
             print('Collision happened!')
-            reward = self.collision_penalty
-            done = True
-            self.eps_rew += reward
-            # print('eps rew: ', self.n_step, self.eps_rew)
-            if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
-            return self.state, reward, done, {'reserved': 0}
-
-        elif track_finished:
-            print('Finished the race')
-            # reward = 10
-            done = True
-            if off_the_road:
-                reward = self.off_the_road_penalty
-            self.eps_rew += reward
-            # print('eps rew: ', self.n_step, self.eps_rew)
-            if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
-            return self.state, reward, done, {'reserved': 0}
+            self.reward = self.collision_penalty
+            self.terminal_state = True
 
         elif off_the_road:
             print('Collision happened because of off the road!')
-            reward = self.off_the_road_penalty
-            # done = True
-            self.eps_rew += reward
-            # print('eps rew: ', self.n_step, self.eps_rew)
-            if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
-            return self.state, reward, done, {'reserved': 0}
-
-        self.eps_rew += reward
-        # print(self.n_step, self.eps_rew)
-        if self.verbosity: print('REWARD'.ljust(15), '{:+8.6f}'.format(reward))
-        return self.state, reward, done, {'reserved': 0}
+            self.reward = self.off_the_road_penalty
+            self.terminal_state = True
+        self.total_reward += self.reward
+        self.step_count += 1
+        return self._get_obs(), self.reward, self.terminal_state, {'reserved': 0}
 
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 171)
+        features_space = np.array([np.inf] * 103)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')
-
-    def reset(self):
-        self.vehicleController.reset()
-        self.world_module.reset()
-        self.world_module.render(self.display)
-        self.init_s = self.world_module.init_s
-        init_d = self.world_module.init_d
-        self.traffic_module.reset(self.init_s, init_d)
-        self.motionPlanner.reset(self.init_s, self.world_module.init_d, df_n=0, Tf=4, Vf_n=0, optimal_path=False)
-        self.f_idx = 0
-
-        self.n_step = 0  # initialize episode steps count
-        self.eps_rew = 0
-        self.is_first_path = True
-        actors_norm_s_d = []  # relative frenet consecutive s and d values wrt ego
-        init_norm_d = round((init_d + self.LANE_WIDTH) / (3 * self.LANE_WIDTH), 2)
-        ego_s_list = [self.init_s for _ in range(self.look_back)]
-        ego_d_list = [init_d for _ in range(self.look_back)]
-
-        self.actor_enumerated_dict['EGO'] = {'NORM_S': [0], 'NORM_D': [init_norm_d],
-                                             'S': ego_s_list, 'D': ego_d_list, 'SPEED': [0]}
-
-        self.fea_ext = FeatureExt(self.world_module, self.dt, self.ego)
+    def _get_obs(self):
         self.fea_ext.update()
+        return self.fea_ext.observation
 
-        if cfg.GYM_ENV.FIXED_REPRESENTATION:
-            cars_state = self.fix_representation()
-            road_info = self.fea_ext.observation
-            self.state = np.concatenate((cars_state.flatten(), road_info))
-            if self.verbosity == 2:
-                print(3 * '---RESET---')
-                print(TENSOR_ROW_NAMES[0].ljust(15),
-                      #      '{:+8.6f}  {:+8.6f}'.format(self.state[-1][1], self.state[-1][0]))
-                      '{:+8.6f}'.format(cars_state[-1][0]))
-                for idx in range(1, cars_state.shape[1]):
-                    print(TENSOR_ROW_NAMES[idx].ljust(15), '{:+8.6f}'.format(cars_state[-1][idx]))
+
+    def close(self):
+        pygame.quit()
+        if self.world is not None:
+            self.world.destroy()
+        self.closed = True
+
+    def render(self, mode="human"):
+        # Get maneuver name
+        if self.current_road_maneuver == RoadOption.LANEFOLLOW:
+            maneuver = "Follow Lane"
+        elif self.current_road_maneuver == RoadOption.LEFT:
+            maneuver = "Left"
+        elif self.current_road_maneuver == RoadOption.RIGHT:
+            maneuver = "Right"
+        elif self.current_road_maneuver == RoadOption.STRAIGHT:
+            maneuver = "Straight"
+        elif self.current_road_maneuver == RoadOption.VOID:
+            maneuver = "VOID"
         else:
-            pass  # Could be debugged to be used
-            # pad the feature lists to recover from the cases where the length of path is less than look_back time
+            maneuver = "INVALID(%i)" % self.current_road_maneuver
 
-            # self.state = self.non_fix_representation(speeds, ego_norm_s, ego_norm_d, actors_norm_s_d)
+        # Add metrics to HUD
+        self.extra_info.extend([
+            "Reward: % 19.2f" % self.reward,
+            "",
+            "Maneuver:        % 11s" % maneuver,
+            "Laps completed:    % 7.2f %%" % (self.laps_completed * 100.0),
+            "Distance traveled: % 7d m" % self.distance_traveled,
+            "Center deviance:   % 7.2f m" % self.distance_from_center,
+            "Avg center dev:    % 7.2f m" % (self.center_lane_deviation / self.step_count),
+            "Avg speed:      % 7.2f km/h" % (3.6 * self.speed_accum / self.step_count)
+        ])
 
-        # ---
-        # Ego starts to move slightly after being relocated when a new episode starts. Probably, ego keeps a fraction of previous acceleration after
-        # being relocated. To solve this, the following procedure is needed.
-        self.ego.set_simulate_physics(enabled=False)
-        # for _ in range(5):
-        self.module_manager.tick()
-        self.ego.set_simulate_physics(enabled=True)
-        self.world_module.tick(self.clock)
-        self.world_module.render(self.display)
+        # Blit image from spectator camera
+        self.display.blit(pygame.surfarray.make_surface(self.viewer_image.swapaxes(0, 1)), (0, 0))
+
+        # Render HUD
+        self.hud.render(self.display, extra_info=self.extra_info)
+        self.extra_info = []  # Reset extra info list
+
+        # Render to screen
         pygame.display.flip()
-        # ----
-        # transform = self.ego.get_transform()
-        # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-        #                                         carla.Rotation(pitch=-90)))
-        return self.state
 
-    def destroy(self):
-        print('Destroying environment...')
-        if self.world_module is not None:
-            self.world_module.destroy()
-            self.traffic_module.destroy()
+        if mode == "rgb_array_no_hud":
+            return self.viewer_image
+        elif mode == "rgb_array":
+            # Turn display surface into rgb_array
+            return np.array(pygame.surfarray.array3d(self.display), dtype=np.uint8).transpose([1, 0, 2])
 ############################################################################
 
-    def _get_obs(self):
-        # features
-        vehicle_obs = self.fix_representation()
-        road_obs = self.fea_ext.observation
+    def _on_collision(self, event):
+        self.hud.notification("Collision with {}".format(get_actor_display_name(event.other_actor)))
 
-        obs = dict(vehicle=vehicle_obs, road=road_obs)
-        return replace_nans(obs)
+    def _on_invasion(self, event):
+        lane_types = set(x.type for x in event.crossed_lane_markings)
+        text = ["%r" % str(x).split()[-1] for x in lane_types]
+        self.hud.notification("Crossed line %s" % " and ".join(text))
 
     def _get_delta_yaw(self):
         """
         calculate the delta yaw between ego and current waypoint
         """
-        current_wpt = self.world_module._map.get_waypoint(location=self.ego.get_location())
+        current_wpt = self.world.map.get_waypoint(location=self.ego.get_location())
         if not current_wpt:
             #self.logger.error('Fail to find a waypoint')
             wpt_yaw = self.current_wpt[2] % 360

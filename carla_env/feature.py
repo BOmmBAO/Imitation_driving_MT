@@ -25,7 +25,7 @@ class FeatureExt():
         self.world = world_modul.world
         self.vehicle = vehicle
         self.vehicle_info = VehicleInfo(vehicle)
-        self.map = world_modul.town_map
+        self.map = world_modul.map
         self.zombie_cars = None
         self.cur_lane = None
         self.cur_lane_width = None
@@ -54,6 +54,7 @@ class FeatureExt():
 
         self.observation = None
         self.info_dict = {}
+        self.draw_dic = {}
         self.obs_index = None
         self.pre_obs_index = None
         self.zombie_num = 0
@@ -369,7 +370,8 @@ class FeatureExt():
     def obs_update(self, one_car=True):
         #feature list
         self.info_dict.clear()
-        #self.ext_egocar_info(self.vehicle, local_frame = False)
+        self.draw_dic.clear()
+        self.ext_egocar_info(self.vehicle, local_frame = False)
         if not one_car:
             self.ext_zombiecars_info(local_frame = True)
         self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = False)
@@ -449,6 +451,10 @@ class FeatureExt():
             return _wp
 
         ego_pos = [self.current_loc.x, self.current_loc.y]
+        self.draw_dic['inner_r'] = inner_line_r
+        self.draw_dic['inner_l'] = inner_line_l
+        self.draw_dic['outer_r'] = outer_line_r
+        self.draw_dis['outer_l'] = outer_line_l
 
         # Transform into vector
         self.info_dict['inner_line_right'] = _to_vector(ego_pos, inner_line_r)

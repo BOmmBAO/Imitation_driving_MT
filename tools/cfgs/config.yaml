@@ -2,9 +2,9 @@
 # distance [m], speed [m/s], acceleration [m/s^2]
 
 CARLA:
-  DT: 0.1                                                       # Set to -1 for variable time-step (real-world simulation)
+  DT: 0.05                                                       # Set to -1 for variable time-step (real-world simulation)
   LANE_WIDTH: 3.5
-  MAX_S: 400                                                   # [int] max frenet s value available in global route
+  MAX_S: 2000                                                   # [int] max frenet s value available in global route
 
 POLICY:
   NAME: PPO2                                                    # DDPG/TRPO/PPO2/A2C
@@ -21,20 +21,22 @@ GYM_ENV:
   MAX_ACC: 6.878                                                # equivalent to 24.7608 km/h.s for Tesla model 3
   LOOK_BACK: 30                                                 # [int] Steps to look back at last path for observation sequence vector
   TIME_STEP: 4                                                  # [int] Steps to look back at last path for observation sequence vector (TIME_STEP + 1)
-  LOOP_BREAK: 30                                                # NOT USED [int] steps to break path following while loop  - must be greater than LOOK_BACK
+  LOOP_BREAK: 20                                                # NOT USED [int] steps to break path following while loop  - must be greater than LOOK_BACK
   DISTN_FRM_VHCL_AHD: 200                                       # Effective distance to keep from vehicle ahead for IDM
 
 RL:
   W_SPEED: 5                                                    # Speed Error Resolution
-  W_R_SPEED: 10                                                 # Speed Reward Magnitude (w*r_speed)
+  W_R_SPEED: 6                                                 # Speed Reward Magnitude (w*r_speed)
   MIN_SPEED_GAIN: 0.07                                          # Min Speed Gain Percentage for meaningful lane change reward
   MIN_SPEED_LOSS: 0.0                                           # Min Speed Loss Percentage for unnecessary lane change penalty
   LANE_CHANGE_PENALTY: 0.2                                      # Unnecesary Lane Change Penalty
   LANE_CHANGE_REWARD: 2                                         # Meaningful Lane Change Reward (w*speed_reward)
+  W_R_POS: 3
+  W_R_ANGLE: 4
   OFF_THE_ROAD: -10                                             # Off-the-road attempt penalty
   COLLISION: -10                                                # Collison penalty
-  SIGMA_POS: 3
-  SIGMA_ANGLE: 4
+  SIGMA_POS: 0.3
+  SIGMA_ANGLE: 0.4
 
 LOCAL_PLANNER:
   MIN_SPEED: 13.89 # 5.56                                       # Allowed min speed for ego vehicle; RL's -1 action maps to this value
