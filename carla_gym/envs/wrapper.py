@@ -112,7 +112,7 @@ def vector(v):
 
 
 camera_transforms = {
-    "spectator": carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
+    "spectator": carla.Transform(carla.Location(x=-5.5, z=50.0), carla.Rotation(pitch=-70)),
     "dashboard": carla.Transform(carla.Location(x=1.6, z=1.7))
 }
 
