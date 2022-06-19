@@ -339,7 +339,7 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 247)
+        features_space = np.array([np.inf] * 207)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')

@@ -38,8 +38,8 @@ class FeatureExt():
         self.waypoints_buffer_lane_id = None
         self.wp_ds = 2
         self.wp_horizon = 70
-        self.distance_rate = 3.0
-        self.wp_index = 30
+        self.distance_rate = 2.5
+        self.wp_index = 25
 
         self.visible_zombie_cars = None
         self.show_dt = 0.2
