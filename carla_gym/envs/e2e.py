@@ -125,13 +125,13 @@ class CarlaEnv(gym.Env):
                              sensor_tick=0.0 if self.synchronous else 1.0 / 30.0)
         self.ego_los_sensor = self.ego.los_sensor
         self.terminal_state = False
-        self.start_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[0].location)
-        self.end_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[-1].location)
-        self.route_waypoints = compute_route_waypoints(self.world.map, self.start_wp, self.end_wp, resolution=3.0,
-                                                       plan=[RoadOption.STRAIGHT] + [RoadOption.RIGHT] * 2 + [
-                                                           RoadOption.STRAIGHT] * 5)
-        self.current_waypoint_index = 0
-        self.checkpoint_waypoint_index = 0
+        # self.start_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[0].location)
+        # self.end_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[-1].location)
+        # self.route_waypoints = compute_route_waypoints(self.world.map, self.start_wp, self.end_wp, resolution=3.0,
+        #                                                plan=[RoadOption.STRAIGHT] + [RoadOption.RIGHT] * 2 + [
+        #                                                    RoadOption.STRAIGHT] * 5)
+        # self.current_waypoint_index = 0
+        # self.checkpoint_waypoint_index = 0
 
 
     def seed(self, seed=None):
@@ -145,16 +145,16 @@ class CarlaEnv(gym.Env):
         self.ego.control.throttle = float(0.0)
         self.ego.control.brake = float(0.0)
         self.ego.tick()
-        if is_training:
-            # Teleport vehicle to last checkpoint
-            waypoint, _ = self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)]
-            self.current_waypoint_index = self.checkpoint_waypoint_index
-        else:
-            # Teleport vehicle to start of track
-            waypoint, _ = self.route_waypoints[0]
-            self.current_waypoint_index = 0
-        transform = waypoint.transform
-        #transform = self.spawn_transform
+        # if is_training:
+        #     # Teleport vehicle to last checkpoint
+        #     waypoint, _ = self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)]
+        #     self.current_waypoint_index = self.checkpoint_waypoint_index
+        # else:
+        #     # Teleport vehicle to start of track
+        #     waypoint, _ = self.route_waypoints[0]
+        #     self.current_waypoint_index = 0
+        # transform = waypoint.transform
+        transform = self.spawn_transform
         transform.location += carla.Location(z=1.0)
         self.ego.set_transform(transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
@@ -182,7 +182,7 @@ class CarlaEnv(gym.Env):
         self.start_t = time.time()
         self.step_count = 0
         self.is_first_path = True
-        self.start_waypoint_index = self.current_waypoint_index
+        #self.start_waypoint_index = self.current_waypoint_index
 
         # Metrics
         self.total_reward = 0.0
@@ -191,7 +191,7 @@ class CarlaEnv(gym.Env):
         self.center_lane_deviation = 0.0
         self.distance_from_center = 0.0
         self.speed_accum = 0.0
-        self.laps_completed = 0.0
+        #self.laps_completed = 0.0
         self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
         self.fea_ext.update()
         self.v_buffer = deque([], maxlen=5)
@@ -212,13 +212,6 @@ class CarlaEnv(gym.Env):
 
 
     def step(self, action):
-        # if not self.synchronous:
-        #     if self.world.fps <= 0:
-        #         # Go as fast as possible
-        #         self.clock.tick()
-        #     else:
-        #         # Sleep to keep a steady fps
-        #         self.clock.tick_busy_loop(self.world.fps)
         self.step_count += 1
         if self.is_first_path:  # Episode start is bypassed
             action = [0, 1.0]
@@ -238,18 +231,6 @@ class CarlaEnv(gym.Env):
         last_speed = get_speed(self.ego)
         self.hud.tick(self.world, self.clock)
         self.world.tick()
-
-        #Synchronous update logic
-        # if self.synchronous:
-        #     #self.clock.tick()
-        #     while True:
-        #         try:
-        #             self.world.wait_for_tick(seconds=1.0 / self.fps + 0.1)
-        #             break
-        #         except:
-        #             # Timeouts happen occasionally for some reason, however, they seem to be fine to ignore
-        #             self.world.tick()
-
         # Get most recent observation and viewer image
         self.viewer_image = self._get_viewer_image()
         """
@@ -262,28 +243,6 @@ class CarlaEnv(gym.Env):
         # Get vehicle transform
         transform = self.ego.get_transform()
 
-        #Keep track of closest waypoint on the route
-        waypoint_index = self.current_waypoint_index
-        for _ in range(len(self.route_waypoints)):
-            # Check if we passed the next waypoint along the route
-            next_waypoint_index = waypoint_index + 1
-            wp, _ = self.route_waypoints[next_waypoint_index % len(self.route_waypoints)]
-            dot = np.dot(vector(wp.transform.get_forward_vector())[:2],
-                         vector(transform.location - wp.transform.location)[:2])
-            if dot > 0.0:  # Did we pass the waypoint?
-                waypoint_index += 1  # Go to next waypoint
-            else:
-                break
-        self.current_waypoint_index = waypoint_index
-
-        #Calculate deviation from center of the lane
-        self.current_waypoint, self.current_road_maneuver = self.route_waypoints[
-            self.current_waypoint_index % len(self.route_waypoints)]
-        self.next_waypoint, self.next_road_maneuver = self.route_waypoints[
-            (self.current_waypoint_index + 1) % len(self.route_waypoints)]
-        # DEBUG: Draw current waypoint
-        # self.world.debug.draw_point(self.current_waypoint.transform.location, color=carla.Color(0, 255, 0),
-        #                           life_time=1.0)
         # Calculate distance traveled
         self.distance_traveled += self.previous_location.distance(transform.location)
         self.previous_location = transform.location
@@ -352,7 +311,7 @@ class CarlaEnv(gym.Env):
         self.v_buffer.append(self.ego.get_speed())
 
         # Update checkpoint for training
-        if any(self.ego.collision_sensor.history):
+        if any(self.ego.collision_sensor.get_collision_history()):
             print('Collision happened!')
             self.reward = self.collision_penalty
             self.terminal_state = True
@@ -363,8 +322,8 @@ class CarlaEnv(gym.Env):
             self.terminal_state = True
 
         # Get lap count
-        self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
-        if self.laps_completed >= 3:
+        #self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
+        if self.distance_traveled > 30000:
             print('route ended!')
             # End after 3 laps
             self.terminal_state = True
@@ -375,10 +334,6 @@ class CarlaEnv(gym.Env):
                 print('speed low!')
 
         # Update checkpoint for training
-        if self.is_training:
-            checkpoint_frequency = 50  # Checkpoint frequency in meters
-            self.checkpoint_waypoint_index = (
-                                                         self.current_waypoint_index // checkpoint_frequency) * checkpoint_frequency
         self.total_reward += self.reward
         self.render()
         return self._get_obs(), self.reward, self.terminal_state, {'reserved': 0}
