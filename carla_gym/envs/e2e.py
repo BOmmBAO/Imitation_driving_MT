@@ -107,9 +107,7 @@ class CarlaEnv(gym.Env):
             settings.synchronous_mode = True
             settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
-        lap_start_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[1].location)
-        self.spawn_transform = lap_start_wp.transform
-        self.spawn_transform.location += carla.Location(z=1.0)
+        self.spawn_transform = self.world.map.get_spawn_points()[1]
         self.ego = Hero_Actor(self.world, self.spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
                                    on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
 
@@ -155,7 +153,6 @@ class CarlaEnv(gym.Env):
         #     self.current_waypoint_index = 0
         # transform = waypoint.transform
         transform = self.spawn_transform
-        transform.location += carla.Location(z=1.0)
         self.ego.set_transform(transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
@@ -311,12 +308,12 @@ class CarlaEnv(gym.Env):
         self.v_buffer.append(self.ego.get_speed())
 
         # Update checkpoint for training
-        if any(self.ego.collision_sensor.get_collision_history()):
-            print('Collision happened!')
-            self.reward = self.collision_penalty
-            self.terminal_state = True
+        # if any(self.ego.collision_sensor.get_collision_history()):
+        #     print('Collision happened!')
+        #     self.reward = self.collision_penalty
+        #     self.terminal_state = True
 
-        elif self.distance_from_center >= 1.2:
+        if self.distance_from_center >= 1.2:
             print('Collision happened because of off the road!')
             self.reward = self.off_the_road_penalty
             self.terminal_state = True
