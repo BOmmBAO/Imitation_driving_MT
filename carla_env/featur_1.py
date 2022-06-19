@@ -38,8 +38,8 @@ class FeatureExt():
         self.waypoints_buffer_lane_id = None
         self.wp_ds = 2
         self.wp_horizon = 70
-        self.distance_rate = 1.4
-        self.wp_index = 40
+        self.distance_rate = 3.0
+        self.wp_index = 30
 
         self.visible_zombie_cars = None
         self.show_dt = 0.2
@@ -89,7 +89,7 @@ class FeatureExt():
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += 1.4
+                seq += self.distance_rate
 
                 # if wp_l[-1].is_junction:
                 #     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
@@ -99,13 +99,13 @@ class FeatureExt():
                     break
             return wp_l
 
-        count = 100
+        count = 50
 
         _lane = self.map.get_waypoint(self.current_loc)
         self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
 
     def expon_down_sample(self):# extract points with rate 1.4
-        wp = self.waypoints_buffer[:40]
+        wp = self.waypoints_buffer[:self.wp_index]
         # for index in self.wp_index[1:]:
         #     if index < len(self.waypoints_buffer):
         #         wp.append(self.waypoints_buffer[index])
@@ -156,8 +156,8 @@ class FeatureExt():
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += 1.4
-                if len(wp_l) >= 40:
+                seq += self.distance_rate
+                if len(wp_l) >= self.wp_index:
                     break
             while len(wp_l) < self.wp_index:
                 print("The number of waypoints is wrong!")
@@ -351,7 +351,7 @@ class FeatureExt():
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
         a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
-        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y, vehicle.get_location().z]
+        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
         self.info_dict['ego_car_yaw'] = [ego_heading]

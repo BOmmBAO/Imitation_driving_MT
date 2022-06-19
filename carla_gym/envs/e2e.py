@@ -164,10 +164,6 @@ class CarlaEnv(gym.Env):
             x=self.targetSpeed * np.cos(yaw),
             y=self.targetSpeed * np.sin(yaw))
         self.ego.set_velocity(init_speed)
-        # self.spectator = self.world.get_spectator()
-        # self.spectator.set_transform(carla.Transform(self.ego.get_location() +
-        #                                              carla.Location(x=-20, z=70),
-        #                                              carla.Rotation(pitch=-70)))
         # if self.synchronous:
         #     ticks = 0
         #     while ticks < self.world.fps * 2:
@@ -234,41 +230,11 @@ class CarlaEnv(gym.Env):
         self.ego.control.throttle = self.ego.control.throttle * self.action_smoothing + throttle * (
                     1.0 - self.action_smoothing)
 
-        # """
-        #         **********************************************************************************************************************
-        #         *********************************************** Draw Waypoints *******************************************************
-        #         **********************************************************************************************************************
-        # """
-        # for p in self.fea_ext.draw_dic['inner_r']:
-        #
-        #     location = p
-        #     color = 'COLOR_ORANGE_0'
-        #     center = self.map_image.world_to_pixel(location)
-        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-        # for p in self.fea_ext.draw_dic['inner_l']:
-        #     location = p
-        #     color = 'COLOR_ORANGE_0'
-        #     center = self.map_image.world_to_pixel(location)
-        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-        # for p in self.fea_ext.draw_dic['outer_r']:
-        #     location = p
-        #     color = ' COLOR_ALUMINIUM_1'
-        #     center = self.map_image.world_to_pixel(location)
-        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-        # for p in self.fea_ext.draw_dic['outer_r']:
-        #     location = p
-        #     color = ' COLOR_ALUMINIUM_1'
-        #     center = self.map_image.world_to_pixel(location)
-        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-
         """
                 **********************************************************************************************************************
                 ************************************************ Update Carla ********************************************************
                 **********************************************************************************************************************
         """
-        # transform = self.ego.get_transform()
-        # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-        #                                              carla.Rotation(pitch=-90)))
         last_speed = get_speed(self.ego)
         self.hud.tick(self.world, self.clock)
         self.world.tick()
@@ -420,7 +386,7 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 328)
+        features_space = np.array([np.inf] * 247)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')
