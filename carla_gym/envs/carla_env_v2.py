@@ -4,17 +4,17 @@ from gym import spaces
 import time
 import itertools
 from tools.modules import *
-from wrapper import *
+from carla_gym.envs.wrapper import *
 from config import cfg
 from carla_env.misc import *
-from planner import compute_route_waypoints
+from carla_gym.envs.planner import compute_route_waypoints
 from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanner
 from plan_control.controller import VehiclePIDController
 from tools.misc import get_speed
 from plan_control.controller import IntelligentDriverModel
 from enum import Enum
 from collections import deque
-from hud import HUD
+from carla_gym.envs.hud import HUD
 try:
     import numpy as np
     import sys
@@ -117,6 +117,7 @@ class CarlaEnv(gym.Env):
         if self.synchronous:
             settings = self.world.get_settings()
             settings.synchronous_mode = True
+            settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
         lap_start_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[1].location)
         spawn_transform = lap_start_wp.transform
@@ -138,9 +139,7 @@ class CarlaEnv(gym.Env):
 
         # Start Modules
         # Generate waypoints along the lap
-        self.route_waypoints, self.global_route = compute_route_waypoints(self.world.map, lap_start_wp, lap_start_wp, resolution=3.0,
-                                                       plan=[RoadOption.STRAIGHT] + [RoadOption.RIGHT] * 2 + [
-                                                           RoadOption.STRAIGHT] * 5)
+        self.global_route = np.load('road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
         #self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
         self.current_waypoint_index = 0
         self.checkpoint_waypoint_index = 0
@@ -164,6 +163,18 @@ class CarlaEnv(gym.Env):
 
     def reset(self, is_training=True):
         self.ego.collision_sensor.reset()
+        if self.global_route is None:
+            self.global_route = np.empty((0, 3))
+            distance = 1
+            for i in range(1520):
+                wp = self.world.map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
+                                                             project_to_road=True).next(distance=distance)[0]
+                distance += 2
+                self.global_route = np.append(self.global_route,
+                                              [[wp.transform.location.x, wp.transform.location.y,
+                                                wp.transform.location.z]], axis=0)
+                # To visualize point clouds
+            np.save('road_maps/global_route_town04', self.global_route)
         self.is_first_path = True
         self.total_reward = 0.0
         self.reward = 0.0
@@ -171,16 +182,7 @@ class CarlaEnv(gym.Env):
         self.ego.control.throttle = float(0.0)
         # self.vehicle.control.brake = float(0.0)
         self.ego.tick()
-        if is_training:
-            # Teleport vehicle to last checkpoint
-            waypoint, _ = self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)]
-            self.current_waypoint_index = self.checkpoint_waypoint_index
-        else:
-            # Teleport vehicle to start of track
-            waypoint, _ = self.route_waypoints[0]
-            self.current_waypoint_index = 0
-        transform = waypoint.transform
-        transform.location += carla.Location(z=1.0)
+        transform = self.world.map.get_spawn_points()[1]
         self.ego.set_transform(transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
@@ -213,7 +215,8 @@ class CarlaEnv(gym.Env):
         self.distance_traveled = 0.0
         self.center_lane_deviation = 0.0
         self.speed_accum = 0.0
-        self.laps_completed = 0.0
+        self.reward = 0.0
+        #self.laps_completed = 0.0
         actors_norm_s_d = []  # relative frenet consecutive s and d values wrt ego
         init_norm_d = round((0.0 + self.LANE_WIDTH) / (3 * self.LANE_WIDTH), 2)
         ego_s_list = [0.0 for _ in range(self.look_back)]
@@ -226,7 +229,7 @@ class CarlaEnv(gym.Env):
         self.fea_ext.update()
         # DEBUG: Draw path
         # self._draw_path(life_time=1000.0, skip=10)
-        return self._get_obs(), self.reward, self.terminal_state, {'reserved': 0}
+        return self._get_obs()
 
     def _set_viewer_image(self, image):
         self.viewer_image_buffer = image
@@ -336,12 +339,6 @@ class CarlaEnv(gym.Env):
             self.hud.tick(self.world, self.clock)
             self.world.tick()
 
-            # distance_traveled = ego_s - self.init_s
-            # if distance_traveled < -5:
-            #     distance_traveled = self.max_s + distance_traveled
-            # if distance_traveled >= self.track_length:
-            #     track_finished = True
-
         """
                 *********************************************************************************************************************
                 *********************************************** RL Observation ******************************************************
@@ -374,8 +371,6 @@ class CarlaEnv(gym.Env):
         negatives = r_laneChange
 
         # sigma_pos = 0.3
-        _, self.current_road_maneuver = self.route_waypoints[self.current_waypoint_index % len(self.route_waypoints)]
-        _, self.next_road_maneuver = self.route_waypoints[(self.current_waypoint_index + 1) % len(self.route_waypoints)]
         sigma_pos = self.sigma_pos
         delta_yaw, wpt_yaw = self._get_delta_yaw()
         road_heading = np.array([
@@ -385,7 +380,7 @@ class CarlaEnv(gym.Env):
         pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
         self.distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
             pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
-        lateral_dist = self.distance_traveled / self.LANE_WIDTH
+        lateral_dist = self.distance_from_center / self.LANE_WIDTH
         track_rewd = np.exp(-np.power(lateral_dist, 2) / 2 / sigma_pos / sigma_pos)
         print("_track", track_rewd)
 
@@ -411,16 +406,11 @@ class CarlaEnv(gym.Env):
         self.previous_location = transform.location
         self.speed_accum += self.ego.get_speed()
         # Get lap count
-        self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
-        if self.laps_completed >= 3:
+        #self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
+        if self.step_count >= 800:
             # End after 3 laps
             self.terminal_state = True
 
-        # Update checkpoint for training
-        if self.is_training:
-            checkpoint_frequency = 50  # Checkpoint frequency in meters
-            self.checkpoint_waypoint_index = (
-                                                         self.current_waypoint_index // checkpoint_frequency) * checkpoint_frequency
         if any(self.ego.collision_sensor.history):
             print('Collision happened!')
             self.reward = self.collision_penalty
@@ -453,26 +443,10 @@ class CarlaEnv(gym.Env):
         self.closed = True
 
     def render(self, mode="human"):
-        # Get maneuver name
-        if self.current_road_maneuver == RoadOption.LANEFOLLOW:
-            maneuver = "Follow Lane"
-        elif self.current_road_maneuver == RoadOption.LEFT:
-            maneuver = "Left"
-        elif self.current_road_maneuver == RoadOption.RIGHT:
-            maneuver = "Right"
-        elif self.current_road_maneuver == RoadOption.STRAIGHT:
-            maneuver = "Straight"
-        elif self.current_road_maneuver == RoadOption.VOID:
-            maneuver = "VOID"
-        else:
-            maneuver = "INVALID(%i)" % self.current_road_maneuver
-
         # Add metrics to HUD
         self.extra_info.extend([
             "Reward: % 19.2f" % self.reward,
             "",
-            "Maneuver:        % 11s" % maneuver,
-            "Laps completed:    % 7.2f %%" % (self.laps_completed * 100.0),
             "Distance traveled: % 7d m" % self.distance_traveled,
             "Center deviance:   % 7.2f m" % self.distance_from_center,
             "Avg center dev:    % 7.2f m" % (self.center_lane_deviation / self.step_count),

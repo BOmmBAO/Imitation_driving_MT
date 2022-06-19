@@ -403,7 +403,7 @@ class Hero_Actor(CarlaActorBase):
             self.collision_sensor = CollisionSensor(world, self, on_collision_fn=on_collision_fn)
         if callable(on_invasion_fn):
             self.lane_sensor = LaneInvasionSensor(world, self, on_invasion_fn=on_invasion_fn)
-        if callable(on_los_fn):
+        if on_los_fn:
             self.los_sensor = LineOfSightSensor(actor)
 
     def tick(self):

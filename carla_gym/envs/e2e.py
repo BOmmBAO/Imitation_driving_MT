@@ -4,17 +4,17 @@ from gym import spaces
 import time
 import itertools
 from tools.modules import *
-from wrapper import *
+from carla_gym.envs.wrapper import *
 from config import cfg
 from carla_env.misc import *
-from planner import compute_route_waypoints
+from carla_gym.envs.planner import compute_route_waypoints
 from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanner
 from plan_control.controller import VehiclePIDController
 from tools.misc import get_speed
 from plan_control.controller import IntelligentDriverModel
 from enum import Enum
 from collections import deque
-from hud import HUD
+from carla_gym.envs.hud import HUD
 try:
     import numpy as np
     import sys
@@ -22,6 +22,7 @@ try:
 except ImportError:
     raise RuntimeError('import error!')
 from carla_env.featur_1 import *
+from gym.utils import seeding
 
 MODULE_WORLD = 'WORLD'
 MODULE_HUD = 'HUD'
@@ -62,13 +63,8 @@ class CarlaEnv(gym.Env):
             pygame.HWSURFACE | pygame.DOUBLEBUF)
         self.clock = pygame.time.Clock()
         self.synchronous = synchronous
-        self.verbosity = args.verbosity
-        self.n_step = 0
-        # self.global_route = np.load(
-        #         'road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
-        self.global_route = None
+        self.seed()
         self.acceleration_ = 0
-        self.eps_rew = 0
 
         # constraints
         self.targetSpeed = float(cfg.GYM_ENV.TARGET_SPEED)
@@ -76,17 +72,6 @@ class CarlaEnv(gym.Env):
         self.maxAcc = float(cfg.GYM_ENV.MAX_ACC)
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
         self.N_SPAWN_CARS = int(cfg.TRAFFIC_MANAGER.N_SPAWN_CARS)
-
-        # frenet
-        self.f_idx = 0
-        self.init_s = 0.0  # initial frenet s value - will be updated in reset function
-        self.max_s = int(cfg.CARLA.MAX_S)
-        self.track_length = int(cfg.GYM_ENV.TRACK_LENGTH)
-        self.look_back = int(cfg.GYM_ENV.LOOK_BACK)
-        self.time_step = int(cfg.GYM_ENV.TIME_STEP)
-        self.loop_break = int(cfg.GYM_ENV.LOOP_BREAK)
-        self.effective_distance_from_vehicle_ahead = int(cfg.GYM_ENV.DISTN_FRM_VHCL_AHD)
-        self.lanechange = False
 
         # RL
         self.w_speed = int(cfg.RL.W_SPEED)
@@ -108,6 +93,8 @@ class CarlaEnv(gym.Env):
         self.action_smoothing = action_smoothing #for e2e to
         self.total_reward = 0.0
         self.reward = 0.0
+        encode_state_fn = None
+        self.encode_state_fn = (lambda x: x) if not callable(encode_state_fn) else encode_state_fn
 
         # instances
         self.dt = float(cfg.CARLA.DT)
@@ -117,12 +104,13 @@ class CarlaEnv(gym.Env):
         if self.synchronous:
             settings = self.world.get_settings()
             settings.synchronous_mode = True
+            settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
         lap_start_wp = self.world.map.get_waypoint(self.world.map.get_spawn_points()[1].location)
-        spawn_transform = lap_start_wp.transform
-        spawn_transform.location += carla.Location(z=1.0)
-        self.ego = Hero_Actor(self.world, spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
-                                   on_invasion_fn=lambda e: self._on_invasion(e))
+        self.spawn_transform = lap_start_wp.transform
+        self.spawn_transform.location += carla.Location(z=1.0)
+        self.ego = Hero_Actor(self.world, self.spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
+                                   on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
 
         self.hud = HUD(self.width, self.height)
         self.hud.set_vehicle(self.ego)
@@ -135,58 +123,40 @@ class CarlaEnv(gym.Env):
                              transform=camera_transforms["spectator"],
                              attach_to=self.ego, on_recv_image=lambda e: self._set_viewer_image(e),
                              sensor_tick=0.0 if self.synchronous else 1.0 / 30.0)
-
-        # Start Modules
-        # Generate waypoints along the lap
-        self.route_waypoints, self.global_route = compute_route_waypoints(self.world.map, lap_start_wp, lap_start_wp, resolution=3.0,
-                                                       plan=[RoadOption.STRAIGHT] + [RoadOption.RIGHT] * 2 + [
-                                                           RoadOption.STRAIGHT] * 5)
-        #self.world_module.points_to_draw['wp {}'.format(wp.id)] = [wp.transform.location, 'COLOR_CHAMELEON_0']
-        self.current_waypoint_index = 0
-        self.checkpoint_waypoint_index = 0
-        self.motionPlanner = MotionPlanner()
-        self.motionPlanner.start(self.global_route)
-        self.ego.update_global_route_csp(self.motionPlanner.csp)
         self.ego_los_sensor = self.ego.los_sensor
-        self.vehicleController = VehiclePIDController(self.ego.actor, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
-        self.IDM = IntelligentDriverModel(self.ego.actor)
-        self.actor_enumerated_dict = {}
-        self.map_image = MapImage(
-            carla_world=self.world,
-            carla_map=self.world.map,
-            pixels_per_meter=12,
-            show_triggers=False,
-            show_connections=False,
-            show_spawn_points=False)
-        self.actors_surface = pygame.Surface(
-            (self.map_image.surface.get_width(), self.map_image.surface.get_height()))
-        self.reset()
+        self.terminal_state = False
+        # self.route_waypoints = compute_route_waypoints(self.world.map, lap_start_wp, lap_start_wp, resolution=1.0,
+        #                                                plan=[RoadOption.STRAIGHT] + [RoadOption.RIGHT] * 2 + [
+        #                                                    RoadOption.STRAIGHT] * 5)
+        # self.current_waypoint_index = 0
+        # self.checkpoint_waypoint_index = 0
+
+
+    def seed(self, seed=None):
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
 
     def reset(self, is_training=True):
-
-        self.total_reward = 0.0
-        self.reward = 0.0
         self.ego.collision_sensor.reset()
         self.ego.control.steer = float(0.0)
         self.ego.control.throttle = float(0.0)
         # self.vehicle.control.brake = float(0.0)
         self.ego.tick()
-        if is_training:
-            # Teleport vehicle to last checkpoint
-            waypoint, _ = self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)]
-            self.current_waypoint_index = self.checkpoint_waypoint_index
-        else:
-            # Teleport vehicle to start of track
-            waypoint, _ = self.route_waypoints[0]
-            self.current_waypoint_index = 0
-        transform = waypoint.transform
+        # if is_training:
+        #     # Teleport vehicle to last checkpoint
+        #     waypoint, _ = self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)]
+        #     self.current_waypoint_index = self.checkpoint_waypoint_index
+        # else:
+        #     # Teleport vehicle to start of track
+        #     waypoint, _ = self.route_waypoints[0]
+        #     self.current_waypoint_index = 0
+        #transform = waypoint.transform
+        transform = self.spawn_transform
         transform.location += carla.Location(z=1.0)
         self.ego.set_transform(transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
-        self.vehicleController.reset()
-        self.motionPlanner.reset(0.0, 0.0, df_n=0, Tf=4, Vf_n=0, optimal_path=False)
-        self.f_idx = 0
         if self.synchronous:
             ticks = 0
             while ticks < self.world.fps * 2:
@@ -204,9 +174,8 @@ class CarlaEnv(gym.Env):
         self.viewer_image = self.viewer_image_buffer = None  # Last received image to show in the viewer
         self.start_t = time.time()
         self.step_count = 0
-        self.is_training = is_training
-        self.start_waypoint_index = self.current_waypoint_index
         self.is_first_path = True
+        self.start_waypoint_index = self.current_waypoint_index
 
         # Metrics
         self.total_reward = 0.0
@@ -215,19 +184,11 @@ class CarlaEnv(gym.Env):
         self.center_lane_deviation = 0.0
         self.speed_accum = 0.0
         self.laps_completed = 0.0
-        actors_norm_s_d = []  # relative frenet consecutive s and d values wrt ego
-        init_norm_d = round((0.0 + self.LANE_WIDTH) / (3 * self.LANE_WIDTH), 2)
-        ego_s_list = [0.0 for _ in range(self.look_back)]
-        ego_d_list = [0.0 for _ in range(self.look_back)]
-
-        self.actor_enumerated_dict['EGO'] = {'NORM_S': [0], 'NORM_D': [init_norm_d],
-                                             'S': ego_s_list, 'D': ego_d_list, 'SPEED': [0]}
-
         self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
         self.fea_ext.update()
         # DEBUG: Draw path
         # self._draw_path(life_time=1000.0, skip=10)
-        return self._get_obs(), self.reward, self.terminal_state, {'reserved': 0}
+        return self._get_obs()
 
     def _set_viewer_image(self, image):
         self.viewer_image_buffer = image
@@ -241,10 +202,6 @@ class CarlaEnv(gym.Env):
 
 
     def step(self, action):
-        if self.closed:
-            raise Exception("CarlaEnv.step() called after the environment was closed." +
-                            "Check for info[\"closed\"] == True in the learning loop.")
-            # Asynchronous update logic
         if not self.synchronous:
             if self.world.fps <= 0:
                 # Go as fast as possible
@@ -255,51 +212,64 @@ class CarlaEnv(gym.Env):
         if self.is_first_path:  # Episode start is bypassed
             action = [0, 1.0]
             self.is_first_path = False
-            steer, throttle = [float(a) for a in action]
-            # steer, throttle, brake = [float(a) for a in action]
-            self.ego.control.steer = self.ego.control.steer * self.action_smoothing + steer * (
-                        1.0 - self.action_smoothing)
-            self.ego.control.throttle = self.ego.control.throttle * self.action_smoothing + throttle * (
-                        1.0 - self.action_smoothing)
+        steer, throttle = [float(a) for a in action]
+        # steer, throttle, brake = [float(a) for a in action]
+        self.ego.control.steer = self.ego.control.steer * self.action_smoothing + steer * (
+                    1.0 - self.action_smoothing)
+        self.ego.control.throttle = self.ego.control.throttle * self.action_smoothing + throttle * (
+                    1.0 - self.action_smoothing)
 
-            """
-                    **********************************************************************************************************************
-                    *********************************************** Draw Waypoints *******************************************************
-                    **********************************************************************************************************************
-            """
-            for p in self.fea_ext.draw_dic['inner_r']:
+        # """
+        #         **********************************************************************************************************************
+        #         *********************************************** Draw Waypoints *******************************************************
+        #         **********************************************************************************************************************
+        # """
+        # for p in self.fea_ext.draw_dic['inner_r']:
+        #
+        #     location = p
+        #     color = 'COLOR_ORANGE_0'
+        #     center = self.map_image.world_to_pixel(location)
+        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
+        # for p in self.fea_ext.draw_dic['inner_l']:
+        #     location = p
+        #     color = 'COLOR_ORANGE_0'
+        #     center = self.map_image.world_to_pixel(location)
+        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
+        # for p in self.fea_ext.draw_dic['outer_r']:
+        #     location = p
+        #     color = ' COLOR_ALUMINIUM_1'
+        #     center = self.map_image.world_to_pixel(location)
+        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
+        # for p in self.fea_ext.draw_dic['outer_r']:
+        #     location = p
+        #     color = ' COLOR_ALUMINIUM_1'
+        #     center = self.map_image.world_to_pixel(location)
+        #     pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
 
-                location = p
-                color = 'COLOR_ORANGE_0'
-                center = self.map_image.world_to_pixel(location)
-                pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-            for p in self.fea_ext.draw_dic['inner_l']:
-                location = p
-                color = 'COLOR_ORANGE_0'
-                center = self.map_image.world_to_pixel(location)
-                pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-            for p in self.fea_ext.draw_dic['outer_r']:
-                location = p
-                color = ' COLOR_ALUMINIUM_1'
-                center = self.map_image.world_to_pixel(location)
-                pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
-            for p in self.fea_ext.draw_dic['outer_r']:
-                location = p
-                color = ' COLOR_ALUMINIUM_1'
-                center = self.map_image.world_to_pixel(location)
-                pygame.draw.circle(self.actors_surface, eval(color), center, radius=7)
+        """
+                **********************************************************************************************************************
+                ************************************************ Update Carla ********************************************************
+                **********************************************************************************************************************
+        """
+        # transform = self.ego.get_transform()
+        # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
+        #                                              carla.Rotation(pitch=-90)))
+        last_speed = get_speed(self.ego)
+        self.hud.tick(self.world, self.clock)
+        self.world.tick()
+        # Synchronous update logic
+        if self.synchronous:
+            self.clock.tick()
+            while True:
+                try:
+                    self.world.wait_for_tick(seconds=1.0 / self.fps + 0.1)
+                    break
+                except:
+                    # Timeouts happen occasionally for some reason, however, they seem to be fine to ignore
+                    self.world.tick()
 
-            """
-                    **********************************************************************************************************************
-                    ************************************************ Update Carla ********************************************************
-                    **********************************************************************************************************************
-            """
-            # transform = self.ego.get_transform()
-            # self.spectator.set_transform(carla.Transform(transform.location + carla.Location(z=20),
-            #                                              carla.Rotation(pitch=-90)))
-            last_speed = get_speed(self.ego)
-            self.hud.tick(self.world, self.clock)
-            self.world.tick()
+        # Get most recent observation and viewer image
+        self.viewer_image = self._get_viewer_image()
         """
                 *********************************************************************************************************************
                 *********************************************** RL Observation ******************************************************
@@ -307,6 +277,39 @@ class CarlaEnv(gym.Env):
         """
         self.fea_ext.update()
         self.fea_ext.observation
+        # Get vehicle transform
+        transform = self.ego.get_transform()
+
+        # Keep track of closest waypoint on the route
+        # waypoint_index = self.current_waypoint_index
+        # for _ in range(len(self.route_waypoints)):
+        #     # Check if we passed the next waypoint along the route
+        #     next_waypoint_index = waypoint_index + 1
+        #     wp, _ = self.route_waypoints[next_waypoint_index % len(self.route_waypoints)]
+        #     dot = np.dot(vector(wp.transform.get_forward_vector())[:2],
+        #                  vector(transform.location - wp.transform.location)[:2])
+        #     if dot > 0.0:  # Did we pass the waypoint?
+        #         waypoint_index += 1  # Go to next waypoint
+        #     else:
+        #         break
+        # self.current_waypoint_index = waypoint_index
+
+        # Calculate deviation from center of the lane
+        # self.current_waypoint, self.current_road_maneuver = self.route_waypoints[
+        #     self.current_waypoint_index % len(self.route_waypoints)]
+        # self.next_waypoint, self.next_road_maneuver = self.route_waypoints[
+        #     (self.current_waypoint_index + 1) % len(self.route_waypoints)]
+        # DEBUG: Draw current waypoint
+        # self.world.debug.draw_point(self.current_waypoint.transform.location, color=carla.Color(0, 255, 0),
+        #                           life_time=1.0)
+        # Calculate distance traveled
+        self.distance_traveled += self.previous_location.distance(transform.location)
+        self.previous_location = transform.location
+
+        # Accumulate speed
+        self.speed_accum += self.ego.get_speed()
+        # Get lap count
+        #self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
         """
                 **********************************************************************************************************************
                 ********************************************* RL Reward Function *****************************************************
@@ -316,8 +319,6 @@ class CarlaEnv(gym.Env):
                                 self.ego.get_transform().rotation.yaw
 
         # sigma_pos = 0.3
-        _, self.current_road_maneuver = self.route_waypoints[self.current_waypoint_index % len(self.route_waypoints)]
-        _, self.next_road_maneuver = self.route_waypoints[(self.current_waypoint_index + 1) % len(self.route_waypoints)]
         sigma_pos = self.sigma_pos
         delta_yaw, wpt_yaw = self._get_delta_yaw()
         road_heading = np.array([
@@ -327,7 +328,7 @@ class CarlaEnv(gym.Env):
         pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
         self.distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
             pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
-        lateral_dist = self.distance_traveled / self.LANE_WIDTH
+        lateral_dist = self.distance_from_center / self.LANE_WIDTH
         track_rewd = np.exp(-np.power(lateral_dist, 2) / 2 / sigma_pos / sigma_pos)
         print("_track", track_rewd)
         print(last_speed)
@@ -343,9 +344,6 @@ class CarlaEnv(gym.Env):
         if 0.6 <= self.distance_from_center < 1.2 :   # unmeaningful lanechange
             r_laneChange = -1 * r_speed * self.lane_change_penalty  # <= 0
 
-        elif self.lanechange:
-            r_speed *= self.lane_change_reward
-
         positives = r_speed
         negatives = r_laneChange
 
@@ -359,7 +357,7 @@ class CarlaEnv(gym.Env):
 
         self.reward = positives + negatives + track_rewd + ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
         # print(self.n_step, self.eps_rew)
-        print("reward:", positives, negatives)
+        print("speed reward:", positives, negatives)
         """
                       **********************************************************************************************************************
                       ********************************************* Episode Termination ****************************************************
@@ -371,16 +369,11 @@ class CarlaEnv(gym.Env):
         self.previous_location = transform.location
         self.speed_accum += self.ego.get_speed()
         # Get lap count
-        self.laps_completed = (self.current_waypoint_index - self.start_waypoint_index) / len(self.route_waypoints)
-        if self.laps_completed >= 3:
+        if self.step_count >= 800:
             # End after 3 laps
             self.terminal_state = True
 
         # Update checkpoint for training
-        if self.is_training:
-            checkpoint_frequency = 50  # Checkpoint frequency in meters
-            self.checkpoint_waypoint_index = (
-                                                         self.current_waypoint_index // checkpoint_frequency) * checkpoint_frequency
         if any(self.ego.collision_sensor.history):
             print('Collision happened!')
             self.reward = self.collision_penalty
@@ -397,7 +390,7 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 327)
+        features_space = np.array([np.inf] * 328)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')
@@ -413,32 +406,32 @@ class CarlaEnv(gym.Env):
         self.closed = True
 
     def render(self, mode="human"):
-        # Get maneuver name
-        if self.current_road_maneuver == RoadOption.LANEFOLLOW:
-            maneuver = "Follow Lane"
-        elif self.current_road_maneuver == RoadOption.LEFT:
-            maneuver = "Left"
-        elif self.current_road_maneuver == RoadOption.RIGHT:
-            maneuver = "Right"
-        elif self.current_road_maneuver == RoadOption.STRAIGHT:
-            maneuver = "Straight"
-        elif self.current_road_maneuver == RoadOption.VOID:
-            maneuver = "VOID"
-        else:
-            maneuver = "INVALID(%i)" % self.current_road_maneuver
+        # # Get maneuver name
+        # if self.current_road_maneuver == RoadOption.LANEFOLLOW:
+        #     maneuver = "Follow Lane"
+        # elif self.current_road_maneuver == RoadOption.LEFT:
+        #     maneuver = "Left"
+        # elif self.current_road_maneuver == RoadOption.RIGHT:
+        #     maneuver = "Right"
+        # elif self.current_road_maneuver == RoadOption.STRAIGHT:
+        #     maneuver = "Straight"
+        # elif self.current_road_maneuver == RoadOption.VOID:
+        #     maneuver = "VOID"
+        # else:
+        #     maneuver = "INVALID(%i)" % self.current_road_maneuver
 
         # Add metrics to HUD
         self.extra_info.extend([
             "Reward: % 19.2f" % self.reward,
+            "Total Reward: % 19.2f" % self.total_reward,
             "",
-            "Maneuver:        % 11s" % maneuver,
-            "Laps completed:    % 7.2f %%" % (self.laps_completed * 100.0),
+            # "Maneuver:        % 11s" % maneuver,
+            #"Laps completed:    % 7.2f %%" % (self.laps_completed * 100.0),
             "Distance traveled: % 7d m" % self.distance_traveled,
             "Center deviance:   % 7.2f m" % self.distance_from_center,
             "Avg center dev:    % 7.2f m" % (self.center_lane_deviation / self.step_count),
             "Avg speed:      % 7.2f km/h" % (3.6 * self.speed_accum / self.step_count)
         ])
-
         # Blit image from spectator camera
         self.display.blit(pygame.surfarray.make_surface(self.viewer_image.swapaxes(0, 1)), (0, 0))
 

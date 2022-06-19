@@ -11,7 +11,7 @@ from pathlib import Path
 currentPath = osp.dirname(osp.abspath(inspect.getfile(inspect.currentframe())))
 # sys.path.insert(1, currentPath + '/agents/stable_baselines/')
 import shutil
-from carla_gym.envs.carla_env_v2 import CarlaEnv
+from carla_gym.envs import Carla_decision
 from carla_gym.envs import Carla_e2e
 
 from rl_algorithm.stable_baselines.bench import Monitor
@@ -49,9 +49,8 @@ def parse_args_cfgs():
         help='Gamma correction of the camera (default: 2.2)')
     parser.add_argument('--play_mode', type=int, help='Display mode: 0:off, 1:2D, 2:3D ', default=2)
     parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
-    parser.add_argument('--env', help='environment ID', type=str, default='CarlaGymEnv-v2')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=int, default=2)
+    parser.add_argument('--agent_id', type=int, default=1)
     parser.add_argument('--num_timesteps', type=float, default=1e7)
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
@@ -89,8 +88,8 @@ def parse_args_cfgs():
 if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
-    #env = CarlaEnv(args)
-    env = CarlaEnv(args)
+    env = Carla_e2e(args)
+    #env = Carla_decision(args)
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------
@@ -134,17 +133,14 @@ if __name__ == '__main__':
         print('Model is Created')
         try:
             print('Training Started')
-            if cfg.POLICY.NAME == 'DDPG':
-                model.learn(total_timesteps=args.num_timesteps, log_interval=args.log_interval, save_path=save_path)
-            else:
-                model.learn(total_timesteps=args.num_timesteps, log_interval=args.log_interval)
+            model.learn(total_timesteps=args.num_timesteps, log_interval=args.log_interval)
         finally:
             print(100 * '*')
             print('FINISHED TRAINING; saving model...')
             print(100 * '*')
             # save model even if training fails because of an error
             model.save(model_dir)
-            env.destroy()
+            env.close()
             print('model has been saved.')
 
     # --------------------------------------------------------------------------------------------------------------------"""

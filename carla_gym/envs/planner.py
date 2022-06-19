@@ -52,9 +52,6 @@ def compute_route_waypoints(world_map, start_waypoint, end_waypoint, resolution=
             while len(wp_choice) == 1:
                 current_waypoint = wp_choice[0]
                 route.append((current_waypoint, RoadOption.LANEFOLLOW))
-                global_route = np.append(global_route,
-                                         [[current_waypoint.transform.location.x, current_waypoint.transform.location.y,
-                                           current_waypoint.transform.location.z]], axis=0)
                 wp_choice = current_waypoint.next(resolution)
 
                 # Stop at destination
@@ -111,18 +108,11 @@ def compute_route_waypoints(world_map, start_waypoint, end_waypoint, resolution=
                 # Generate all waypoints within the junction
                 # along selected path
                 route.append((current_waypoint, action))
-                global_route = np.append(global_route,
-                                         [[current_waypoint.transform.location.x, current_waypoint.transform.location.y,
-                                           current_waypoint.transform.location.z]], axis=0)
                 current_waypoint = current_waypoint.next(resolution)[0]
                 while current_waypoint.is_intersection:
                     route.append((current_waypoint, action))
-                    global_route = np.append(global_route,
-                                             [[current_waypoint.transform.location.x,
-                                               current_waypoint.transform.location.y,
-                                               current_waypoint.transform.location.z]], axis=0)
                     current_waypoint = current_waypoint.next(resolution)[0]
-        assert route, global_route
+        assert route
 
     # Change action 5 wp before intersection
     num_wp_to_extend_actions_with = 5
@@ -135,4 +125,4 @@ def compute_route_waypoints(world_map, start_waypoint, end_waypoint, resolution=
                     route[i - j - 1] = (route[i - j - 1][0], route[i][1])
         action = next_action
 
-    return route, global_route
+    return route
