@@ -272,7 +272,7 @@ class CarlaEnv(gym.Env):
         #speed reward
         e_speed = abs(self.targetSpeed - last_speed)
         sigmal_v = 0.6 if e_speed <= self.targetSpeed else 1.0
-        r_speed = np.exp(-e_speed ** 2 / 2 / (sigmal_v ** 2))  # 0<= r_speed <= self.w_r_speed
+        r_speed = self.w_r_speed * np.exp(-e_speed ** 2 / 2 / (sigmal_v ** 2))  # 0<= r_speed <= self.w_r_speed
         #  first two path speed change increases regardless so we penalize it differently
 
         #spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
@@ -292,7 +292,8 @@ class CarlaEnv(gym.Env):
         # print("_ang", ang_rewd)
 
 
-        self.reward = (positives + negatives) * track_rewd * ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
+        #self.reward = (positives + negatives) * track_rewd * ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
+        self.reward = (positives + negatives) * ang_rewd
         # print(self.n_step, self.eps_rew)
         # print("speed reward:", positives, negatives)
         """
