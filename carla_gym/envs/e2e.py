@@ -21,7 +21,7 @@ try:
     from os import path as osp
 except ImportError:
     raise RuntimeError('import error!')
-from carla_env.feature import *
+from carla_env.featur_1 import *
 
 MODULE_WORLD = 'WORLD'
 MODULE_HUD = 'HUD'
@@ -397,7 +397,7 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 103)
+        features_space = np.array([np.inf] * 327)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')

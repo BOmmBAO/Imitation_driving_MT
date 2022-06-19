@@ -12,9 +12,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import copy
 import math
-
+from config import cfg
 from plan_control.quintic_polynomial import QuinticPolynomial
-from plan_control.cubic_spline import Spline2D
+from plan_control.cubic_spline import Spline2D, Spline3D
 
 
 SIM_LOOP = 500
@@ -250,3 +250,42 @@ def generate_target_course(x, y):
         rk.append(csp.calc_curvature(i_s))
 
     return rx, ry, ryaw, rk, csp
+
+class FrenetPlanner:
+    def __init__(self):
+
+        if float(cfg.CARLA.DT) > 0:
+            self.dt = float(cfg.CARLA.DT)
+        else:
+            self.dt = 0.05
+
+        # Parameters
+        self.MAX_SPEED = 50.0 / 3.6  # maximum speed [m/s]
+        self.MAX_ACCEL = 4.0  # maximum acceleration [m/ss]  || Tesla model 3: 6.878
+        self.MAX_CURVATURE = 1.0  # maximum curvature [1/m]
+        self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
+        self.MAXT = 6.0  # max prediction time [m]
+        self.MINT = 3.0  # min prediction time [m]
+        self.D_T = 3.0  # prediction timestep length (s)
+        self.D_T_S = 5.0 / 3.6  # target speed sampling length [m/s]
+        self.N_S_SAMPLE = 1  # sampling number of target speed
+        self.ROBOT_RADIUS = 2.0  # robot radius [m]
+        self.MAX_DIST_ERR = 4.0  # max distance error to update frenet states based on ego states
+
+        # cost weights
+        self.KJ = 0.1
+        self.KT = 0.1
+        self.KD = 1.0
+        self.KLAT = 1.0
+        self.KLON = 1.0
+
+        self.path = None  # current frenet path
+        self.ob = []  # n obstacles [[x1, y1, z1], [x2, y2, z2], ... ,[xn, yn, zn]]
+        self.csp = None  # cubic spline for global rout
+        self.steps = 0  # planner steps
+
+        self.targetSpeed = float(cfg.GYM_ENV.TARGET_SPEED)
+        min_speed = float(cfg.LOCAL_PLANNER.MIN_SPEED)
+        max_speed = float(cfg.LOCAL_PLANNER.MAX_SPEED)
+        self.speed_center = (max_speed + min_speed) / 2
+        self.speed_radius = (max_speed - min_speed) / 2

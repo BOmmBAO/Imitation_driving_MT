@@ -25,7 +25,7 @@ class FeatureExt():
         self.world = world_modul.world
         self.vehicle = vehicle
         self.vehicle_info = VehicleInfo(vehicle)
-        self.map = world_modul._map
+        self.map = world_modul.map
         self.zombie_cars = None
         self.cur_lane = None
         self.cur_lane_width = None
@@ -39,7 +39,7 @@ class FeatureExt():
         self.wp_ds = 2
         self.wp_horizon = 70
         self.distance_rate = 1.4
-        self.wp_index = self.exponential_index(horizon=70)
+        self.wp_index = 40
 
         self.visible_zombie_cars = None
         self.show_dt = 0.2
@@ -88,57 +88,27 @@ class FeatureExt():
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += 1.0
+                seq += 1.4
 
-                if wp_l[-1].is_junction:
-                    _lane = self.map.get_waypoint(wp_l[-1].transform.location)
-                    wp_l.extend(_lane.next_until_lane_end(1.0))
-                    break
+                # if wp_l[-1].is_junction:
+                #     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
+                #     wp_l.extend(_lane.next_until_lane_end(1.0))
+                #     break
                 if len(wp_l) >= max_sample:
                     break
             return wp_l
 
-        def check_lane_change(cur_lane, buffer_pos):
-            if cur_lane.lane_id == buffer_pos.lane_id:
-                return False
-            else:
-                return True
-
         count = 100
 
-        if self.waypoints_buffer is None:
-            _lane = self.map.get_waypoint(self.current_loc)
-            self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
-
-        # Find the nearest point in the waypoints buffer
-        nearest_dist, index = 70, 0
-        for i in range(len(self.waypoints_buffer)):
-            pos = self.waypoints_buffer[i].transform.location
-            _dist = np.hypot(pos.x - self.current_loc.x, pos.y - self.current_loc.y)
-            if _dist < nearest_dist:
-                nearest_dist = _dist
-                index = i
-        self.waypoints_buffer = self.waypoints_buffer[index:]
-
-        if check_lane_change(self.cur_lane, self.waypoints_buffer[-1]):
-            _lane = self.map.get_waypoint(self.current_loc)
-            self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
-
-        # Update
-        if 0 < len(self.waypoints_buffer) < count:
-            _lane = self.map.get_waypoint(self.waypoints_buffer[-1].transform.location)
-            self.waypoints_buffer.extend(uniform_wps(_lane, self.wp_ds,
-                                                     count - len(self.waypoints_buffer)))
+        _lane = self.map.get_waypoint(self.current_loc)
+        self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
 
     def expon_down_sample(self):# extract points with rate 1.4
-        wp_list = self.waypoints_buffer
-        wp = [wp_list[0], wp_list[1], wp_list[2], wp_list[3], \
-              wp_list[5], wp_list[7], wp_list[10], wp_list[14], \
-              wp_list[20], wp_list[28], wp_list[40], wp_list[56]]
+        wp = self.waypoints_buffer[:40]
         # for index in self.wp_index[1:]:
         #     if index < len(self.waypoints_buffer):
         #         wp.append(self.waypoints_buffer[index])
-        while len(wp) < len(self.wp_index):
+        while len(wp) < self.wp_index:
             print("The number of waypoints is wrong!")
             wp.append(wp[-1])
         return wp
@@ -178,30 +148,17 @@ class FeatureExt():
             wp_l = wp_side_extract(wp_l, cur_wp, 'left')
         return wp_l
 
-    def exponential_index(self, horizon):
-        exp_index = []
-        time = 0
-        seq = 1.4
-        while seq <= horizon:
-            exp_index.append(time)
-            seq *= 1.4
-            time += 1
-        return exp_index
-
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            # seq = 1.0
-            # wp_l = []
-            # while True:
-            #     wp_l.append(wp.next(seq)[0])
-            #     seq *= 1.4
-            #     if seq > max_distance:
-            #         break
-            wp_l = [wp.next(1)[0], wp.next(2)[0], wp.next(3)[0], wp.next(4)[0], \
-                   wp.next(6)[0], wp.next(8)[0], wp.next(11)[0], wp.next(15)[0], \
-                   wp.next(21)[0], wp.next(29)[0], wp.next(41)[0], wp.next(57)[0]]
-            while len(wp_l) < len(self.wp_index):
+            seq = 1.0
+            wp_l = []
+            while True:
+                wp_l.append(wp.next(seq)[0])
+                seq += 1.4
+                if len(wp_l) >= 40:
+                    break
+            while len(wp_l) < self.wp_index:
                 print("The number of waypoints is wrong!")
                 wp_l.append(wp_l[-1])
             return wp_l
