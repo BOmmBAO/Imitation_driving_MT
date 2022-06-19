@@ -198,7 +198,7 @@ class CarlaEnv(gym.Env):
         self.laps_completed = 0.0
         self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
         self.fea_ext.update()
-        #self.time = time.time()
+        self.v_buffer = deque([], maxlen=5)
         #self.render()
         # DEBUG: Draw path
         # self._draw_path(life_time=1000.0, skip=10)
@@ -349,7 +349,8 @@ class CarlaEnv(gym.Env):
 
         #speed reward
         e_speed = abs(self.targetSpeed - last_speed)
-        r_speed = np.exp(-e_speed ** 2 / 2 / (0.1*self.w_r_speed * 0.1 * self.w_speed))  # 0<= r_speed <= self.w_r_speed
+        sigmal_v = 0.6 if e_speed <= self.targetSpeed else 1.0
+        r_speed = np.exp(-e_speed ** 2 / 2 / (sigmal_v ** 2))  # 0<= r_speed <= self.w_r_speed
         #  first two path speed change increases regardless so we penalize it differently
 
         #spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
@@ -382,6 +383,7 @@ class CarlaEnv(gym.Env):
         self.distance_traveled += self.previous_location.distance(transform.location)
         self.previous_location = transform.location
         self.speed_accum += self.ego.get_speed()
+        self.v_buffer.append(self.ego.get_speed())
 
         # Update checkpoint for training
         if any(self.ego.collision_sensor.history):
@@ -400,10 +402,11 @@ class CarlaEnv(gym.Env):
             print('route ended!')
             # End after 3 laps
             self.terminal_state = True
-        if self.speed_accum <= 4* self.step_count:
-
-            self.terminal_state = True
-            print('speed low!')
+        v_norm_mean = np.mean(self.v_buffer)
+        if len(self.v_buffer) == 5:
+            if v_norm_mean < 4 :
+                self.terminal_state = True
+                print('speed low!')
 
         # Update checkpoint for training
         if self.is_training:
