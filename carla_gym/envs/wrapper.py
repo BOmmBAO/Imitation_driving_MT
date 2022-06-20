@@ -343,9 +343,13 @@ class Vehicle(CarlaActorBase):
 # ===============================================================================
 
 class World():
-    def __init__(self, args, client):
-        self.world = client.load_world('Town04')
-        self.world.set_weather(getattr(carla.WeatherParameters, 'ClearNoon'))
+    def __init__(self, client, world):
+        # Set map
+        self.world = client.load_world(world)
+        self.map = self.world.get_map()
+
+        # Set weather
+        self.world.set_weather(carla.WeatherParameters.ClearNoon)
         self.map = self.get_map()
         self.actor_list = []
         self.fps = 30.0

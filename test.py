@@ -15,13 +15,11 @@ from carla_gym.envs import Carla_decision
 from carla_gym.envs import Carla_e2e
 
 from rl_algorithm.stable_baselines.bench import Monitor
-from rl_algorithm.stable_baselines.ddpg.policies import MlpPolicy as DDPGMlpPolicy
-from rl_algorithm.stable_baselines.ddpg.policies import CnnPolicy as DDPGCnnPolicy
 from rl_algorithm.stable_baselines.common.policies import MlpPolicy as CommonMlpPolicy
 from rl_algorithm.stable_baselines.common.policies import MlpLstmPolicy as CommonMlpLstmPolicy
 from rl_algorithm.stable_baselines.common.policies import CnnPolicy as CommonCnnPolicy
-from rl_algorithm.stable_baselines.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise, AdaptiveParamNoiseSpec
 from rl_algorithm.stable_baselines import PPO2
+from rl_algorithm.stable_baselines import A2C
 
 from rl_algorithm.stable_baselines.common.policies import BasePolicy, nature_cnn, register_policy, sequence_1d_cnn, sequence_1d_cnn_ego_bypass_tc
 
@@ -88,8 +86,8 @@ def parse_args_cfgs():
 if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
-    env = Carla_e2e(args)
-    #env = Carla_decision(args)
+    env = Carla_e2e(args=args)
+    #env = Carla_decision(args=args)
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------
@@ -126,6 +124,8 @@ if __name__ == '__main__':
 
         if cfg.POLICY.NAME == 'PPO2':
             model = PPO2(policy[cfg.POLICY.NET], env, verbose=0, model_dir=save_path, policy_kwargs=None)
+        elif cfg.POLICY.NAME =='A2C':
+            model = A2C(policy[cfg.POLICY.NET], env, verbose=1, model_dir=save_path, policy_kwargs={'cnn_extractor': eval(cfg.POLICY.CNN_EXTRACTOR)})
         else:
             print(cfg.POLICY.NAME)
             raise Exception('Algorithm name is not defined!')
@@ -165,6 +165,8 @@ if __name__ == '__main__':
         print('{} is Loading...'.format(args.test_model))
         if cfg.POLICY.NAME == 'PPO2':
             model = PPO2.load(model_dir)
+        elif cfg.POLICY.NAME == 'A2C':
+            model = A2C.load(model_dir)
         else:
             print(cfg.POLICY.NAME)
             raise Exception('Algorithm name is not defined!')
