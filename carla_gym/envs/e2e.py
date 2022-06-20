@@ -290,7 +290,7 @@ class CarlaEnv(gym.Env):
         last_speed = get_speed(self.ego)
         e_speed = abs(self.targetSpeed - last_speed)
         sigmal_v = 0.6 if e_speed <= self.targetSpeed else 1.0
-        r_speed = self.w_r_speed * np.exp(-e_speed/self.targetSpeed ** 2 / 2 / (sigmal_v ** 2))  # 0<= r_speed <= self.w_r_speed
+        r_speed = self.w_r_speed * np.exp(-(e_speed/self.targetSpeed) ** 2 / 2 / (sigmal_v ** 2))  # 0<= r_speed <= self.w_r_speed
         #  first two path speed change increases regardless so we penalize it differently
 
         #spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
@@ -305,7 +305,7 @@ class CarlaEnv(gym.Env):
         # angle reward
         sigma_yaw = self.sigma_angle
         yaw_err = delta_yaw * np.pi / 180
-        ang_rewd = np.exp(-10 * np.power(yaw_err, 2) / 2 / sigma_yaw / sigma_yaw)
+        ang_rewd = np.exp( np.power(yaw_err, 2) / 2 / sigma_yaw / sigma_yaw)
         #ang_rewd = -100*(yaw_err**2)
 
         # print("_ang", ang_rewd)
@@ -332,23 +332,25 @@ class CarlaEnv(gym.Env):
                               (self.step_count, self.route_id))
             self.terminal_state = True
 
-        if self.distance_from_center >= 0.8:
+        elif self.distance_from_center >= 0.8:
             print('Collision happened because of off the road!')
             self.reward = self.off_the_road_penalty
             self.terminal_state = True
 
+        elif last_speed < 4:
+            self.terminal_state = True
+            self.reward = self.off_the_road_penalty
+            print('speed low!')
+        elif any(self.ego.collision_sensor.get_collision_history()):
+            self.terminal_state = True
+            self.reward = self.off_the_road_penalty
+            print('Collision !')
         # If at destination
-        dest = self.dest
-        if np.sqrt((car_x-dest[0])**2+(car_y-dest[1])**2) < 2.0:
+        elif np.sqrt((car_x - self.dest[0]) ** 2 + (car_y - self.dest[1]) ** 2) < 2.0:
             print("Get destination! Episode Done.")
             self.logger.debug('Get destination! Episode cost %d steps in route %d.' % (self.step_count, self.route_id))
             # self.isSuccess = True
             self.terminal_state = True
-
-        if last_speed < 4 or any(self.ego.collision_sensor.get_collision_history()):
-            self.terminal_state = True
-            self.reward = self.off_the_road_penalty
-            print('speed low!')
 
         # Update checkpoint for training
         self.total_reward += self.reward
@@ -375,19 +377,6 @@ class CarlaEnv(gym.Env):
         self.closed = True
 
     def render(self, mode="human"):
-        # # Get maneuver name
-        # if self.current_road_maneuver == RoadOption.LANEFOLLOW:
-        #     maneuver = "Follow Lane"
-        # elif self.current_road_maneuver == RoadOption.LEFT:
-        #     maneuver = "Left"
-        # elif self.current_road_maneuver == RoadOption.RIGHT:
-        #     maneuver = "Right"
-        # elif self.current_road_maneuver == RoadOption.STRAIGHT:
-        #     maneuver = "Straight"
-        # elif self.current_road_maneuver == RoadOption.VOID:
-        #     maneuver = "VOID"
-        # else:
-        #     maneuver = "INVALID(%i)" % self.current_road_maneuver
 
         # Add metrics to HUD
         self.extra_info.extend([
@@ -446,14 +435,6 @@ class CarlaEnv(gym.Env):
             delta_yaw += 360
 
         return delta_yaw, wpt_yaw
-    def _get_velocity(self):
-        _v = self.ego.get_velocity()
-        ego_velocity = np.array([_v.x, _v.y, _v.z])
-        _acc = self.ego.get_acceleration()
-        ego_acc = np.array([_acc.x, _acc.y, _acc.z])
-        v = np.linalg.norm(ego_velocity)
-        acc = np.linalg.norm(ego_acc)
-        return v, acc
 
     def _get_waypoint_xyz(self):
         """

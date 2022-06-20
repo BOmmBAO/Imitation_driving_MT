@@ -77,6 +77,7 @@ def delta_angle_between(theta_1, theta_2):
     elif -360 <= delta_theta and delta_theta <= -180:
         delta_theta += 360
     return delta_theta
+
 def euclidean_distance(v1, v2):
     return math.sqrt(sum([(a - b) ** 2 for a, b in zip(v1, v2)]))
 
