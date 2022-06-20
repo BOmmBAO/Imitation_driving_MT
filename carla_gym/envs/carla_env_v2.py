@@ -64,7 +64,7 @@ class CarlaEnv(gym.Env):
     action smoothing: Scalar used to smooth the incomming action signal for e2e.
                 1.0 = max smoothing, 0.0 = no smoothing
     """
-    def __init__(self, args, action_smoothing=0.9, synchronous=True, viewer_res=(1280, 720), obs_res=(1280, 720)): #lanes_change=5):
+    def __init__(self, args, action_smoothing=0.9, synchronous=True, viewer_res=(1280, 720)): #lanes_change=5):
         self.__version__ = "0.9.9"
         self.logger = setup_carla_logger(
             "output_id", experiment_name=str(2.1))
@@ -88,6 +88,7 @@ class CarlaEnv(gym.Env):
         # self.global_route = np.load(
         #         'road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
         self.global_route = None
+        self.points_to_draw = []
 
         # constraints
         self.targetSpeed = float(cfg.GYM_ENV.TARGET_SPEED)
@@ -132,7 +133,6 @@ class CarlaEnv(gym.Env):
         self.dt = float(cfg.CARLA.DT)
         self.client = carla.Client(self.args.carla_host, self.args.carla_port)
         self.client.set_timeout(3.0)
-        self.world = World(self.args, self.client)
         if self.task_mode == 'Straight':
             world = 'Town01'
         elif self.task_mode == 'Curve':
@@ -154,7 +154,7 @@ class CarlaEnv(gym.Env):
             settings.synchronous_mode = True
             settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
-            # Load routes
+        # Load routes
         self.starts, self.dests = train_coordinates(self.task_mode)
         # Spawn the ego vehicle at a fixed position between start and dest
         # Start and Destination
@@ -170,6 +170,7 @@ class CarlaEnv(gym.Env):
         self.dest = self.dests[self.route_id]
         self.current_wpt = np.array((self.start[0], self.start[1],
                                      self.start[5]))
+
         self.spawn_transform = self._set_carla_transform(self.start)
         self.ego = Hero_Actor(self.world, self.spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
                               on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
@@ -189,9 +190,11 @@ class CarlaEnv(gym.Env):
 
         # Start Modules
         # Generate waypoints along the lap
-        self.init_local_route = self.local_route = self._generate_local_route(self.spawn_transform.location)
+        self._generate_local_route(self.spawn_transform.location)
+        self.init_local_route = self.local_route
+        print(len(self.init_local_route))
         self.motionPlanner = MotionPlanner()
-        self.motionPlanner.start(self.local_route)
+        self.motionPlanner.start(self.init_local_route)
         self.ego.update_global_route_csp(self.motionPlanner.csp)
         self.ego_los_sensor = self.ego.los_sensor
         self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
@@ -239,13 +242,15 @@ class CarlaEnv(gym.Env):
 
         self.local_route = np.empty((0, 3))
         distance = 1
-        for i in range(250):
+        for i in range(100):
             wp = self.world.map.get_waypoint(carla.Location(x=start.x, y=start.y, z=start.z),
                                                          project_to_road=True).next(distance=distance)[0]
-            distance += 4
+            distance += 3.0
             self.local_route = np.append(self.local_route,
                                           [[wp.transform.location.x, wp.transform.location.y,
                                             wp.transform.location.z]], axis=0)
+
+
 
     def _set_carla_transform(self, pose):
         """Get a carla tranform object given pose.
@@ -309,7 +314,8 @@ class CarlaEnv(gym.Env):
         ego_init_d, ego_target_d = fpath.d[0], fpath.d[-1]
         # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
         loop_counter = 0
-
+        flag = False
+        #
         while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
                                           loop_counter < self.loop_break or self.lanechange):
 
@@ -322,7 +328,8 @@ class CarlaEnv(gym.Env):
             cmdWP2 = [fpath.x[self.f_idx + 1], fpath.y[self.f_idx + 1]]
 
             # overwrite command speed using IDM
-            ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
+            #print(ego_state)
+            #ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
             ego_d = fpath.d[self.f_idx]
             #vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
             cmdSpeed = self.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=None)
@@ -339,16 +346,27 @@ class CarlaEnv(gym.Env):
 
             self.hud.tick(self.world, self.clock)
             self.world.tick()
-            # Get most recent observation and viewer image
+        # Get most recent observation and viewer image
             self.viewer_image = self._get_viewer_image()
-            self._generate_local_route()
-            self.motionPlanner.start(self.local_route)
+            if any(self.ego.collision_sensor.get_collision_history()):
+                flag = True
+                break
+
+                # if self.local_route.any():
+                #     for p in self.motionPlanner.csp:
+                #         transform = carla.Transform()
+                #         transform.location.x = p.sx
+                #         transform.location.y = p.sy
+                #         transform.location.z = p.sz
+                #         self.world.debug.draw_point(transform.location, life_time=0.2)
 
         """
                 *********************************************************************************************************************
                 *********************************************** RL Observation ******************************************************
                 *********************************************************************************************************************
         """
+        self._generate_local_route(self.ego.get_location())
+        self.motionPlanner.start(self.local_route)
         self.fea_ext.update()
         self.fea_ext.observation
 
@@ -431,7 +449,7 @@ class CarlaEnv(gym.Env):
             self.terminal_state = True
             self.reward = self.off_the_road_penalty
             print('speed low!')
-        elif any(self.ego.collision_sensor.get_collision_history()):
+        elif flag:
             self.terminal_state = True
             self.reward = self.off_the_road_penalty
             print('Collision !')
@@ -450,7 +468,7 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 327)
+        features_space = np.array([np.inf] * 117)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')

@@ -48,7 +48,7 @@ def parse_args_cfgs():
     parser.add_argument('--play_mode', type=int, help='Display mode: 0:off, 1:2D, 2:3D ', default=2)
     parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=float, default=1.1)
+    parser.add_argument('--agent_id', type=float, default=1.0)
     parser.add_argument('--num_timesteps', type=float, default=1e7)
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)

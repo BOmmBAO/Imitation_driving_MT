@@ -119,7 +119,7 @@ class CarlaEnv(gym.Env):
             settings.synchronous_mode = True
             settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
-            # Load routes
+        # Load routes
         self.starts, self.dests = train_coordinates(self.task_mode)
         # Spawn the ego vehicle at a fixed position between start and dest
         # Start and Destination
