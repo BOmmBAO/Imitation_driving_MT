@@ -62,7 +62,6 @@ class CarlaEnv(gym.Env):
             pygame.HWSURFACE | pygame.DOUBLEBUF)
         self.clock = pygame.time.Clock()
         self.synchronous = synchronous
-        self.seed()
         self.acceleration_ = 0
 
         # constraints
@@ -122,8 +121,23 @@ class CarlaEnv(gym.Env):
             self.world.apply_settings(settings)
             # Load routes
         self.starts, self.dests = train_coordinates(self.task_mode)
-        self.route_deterministic_id = 0
-        self.spawn_transform = self.world.map.get_spawn_points()[1]
+        # Spawn the ego vehicle at a fixed position between start and dest
+        # Start and Destination
+        if self.task_mode == 'Straight':
+            self.route_id = 0
+        elif self.task_mode == 'Curve':
+            self.route_id = 1  # np.random.randint(2, 4)
+        elif self.task_mode == 'Long' or self.task_mode == 'Lane' or self.task_mode == 'Lane_test':
+            self.route_id = 0
+        elif self.task_mode == 'U_curve':
+            self.route_id = 0
+        self.start = self.starts[self.route_id]
+        self.dest = self.dests[self.route_id]
+        self.current_wpt = np.array((self.start[0], self.start[1],
+                                     self.start[5]))
+        self.start = self.starts[self.route_id]
+        self.dest = self.dests[self.route_id]
+        self.spawn_transform = self._set_carla_transform(self.start)
         self.ego = Hero_Actor(self.world, self.spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
                                    on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
 
@@ -142,37 +156,13 @@ class CarlaEnv(gym.Env):
         self.total_steps = 0
 
 
-    def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
-
-
     def reset(self, is_training=True):
         self.ego.collision_sensor.reset()
         self.ego.control.steer = float(0.0)
         self.ego.control.throttle = float(0.0)
         self.ego.control.brake = float(0.0)
         self.ego.tick()
-        if self.task_mode == 'Straight':
-            self.route_id = 0
-        elif self.task_mode == 'Curve':
-            self.route_id = 1  # np.random.randint(2, 4)
-        elif self.task_mode == 'Long' or self.task_mode == 'Lane' or self.task_mode == 'Lane_test':
-            if is_training:
-                self.route_id = np.random.randint(0, 4)
-            elif not is_training:
-                self.route_id = self.route_deterministic_id
-                self.route_deterministic_id = (
-                                                      self.route_deterministic_id + 1) % 4
-        elif self.task_mode == 'U_curve':
-            self.route_id = 0
-        self.start = self.starts[self.route_id]
-        self.dest = self.dests[self.route_id]
-        self.current_wpt = np.array((self.start[0], self.start[1],
-                                     self.start[5]))
-        ego_spawn_times = 0
-        transform = self._set_carla_transform(self.start)
-        self.ego.set_transform(transform)
+        self.ego.set_transform(self.spawn_transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
         yaw = (self.ego.get_transform().rotation.yaw) * np.pi / 180.0
@@ -306,7 +296,7 @@ class CarlaEnv(gym.Env):
         #spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
         r_laneChange = 0
 
-        if 0.6 <= self.distance_from_center < 1.2 :   # unmeaningful lanechange
+        if 0.6 <= self.distance_from_center < 0.8 :   # unmeaningful lanechange
             r_laneChange = -1 * r_speed * self.lane_change_penalty  # <= 0
 
         positives = r_speed
@@ -342,20 +332,22 @@ class CarlaEnv(gym.Env):
                               (self.step_count, self.route_id))
             self.terminal_state = True
 
-        if self.distance_from_center >= 1.2:
+        if self.distance_from_center >= 0.8:
             print('Collision happened because of off the road!')
             self.reward = self.off_the_road_penalty
             self.terminal_state = True
 
-        # Get lap count
-        if self.distance_traveled > 30000:
-            print('route ended!')
-            # End after 3 laps
+        # If at destination
+        dest = self.dest
+        if np.sqrt((car_x-dest[0])**2+(car_y-dest[1])**2) < 2.0:
+            print("Get destination! Episode Done.")
+            self.logger.debug('Get destination! Episode cost %d steps in route %d.' % (self.step_count, self.route_id))
+            # self.isSuccess = True
             self.terminal_state = True
 
         if last_speed < 4 or any(self.ego.collision_sensor.get_collision_history()):
             self.terminal_state = True
-            self.reward = -10
+            self.reward = self.off_the_road_penalty
             print('speed low!')
 
         # Update checkpoint for training
