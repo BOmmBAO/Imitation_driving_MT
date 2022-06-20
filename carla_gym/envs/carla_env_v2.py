@@ -143,7 +143,7 @@ class CarlaEnv(gym.Env):
             # self.world = self.client.load_world('Town02')
         elif self.task_mode == 'Lane':
             # self.world = self.client.load_world('Town01')
-            world = 'Town05'
+            world = 'Town04'
         elif self.task_mode == 'U_curve':
             world = 'Town03'
         elif self.task_mode == 'Lane_test':
@@ -152,6 +152,7 @@ class CarlaEnv(gym.Env):
         if self.synchronous:
             settings = self.world.get_settings()
             settings.synchronous_mode = True
+            settings.no_rendering_mode = True
             settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
         # Load routes
@@ -166,12 +167,14 @@ class CarlaEnv(gym.Env):
             self.route_id = 0
         elif self.task_mode == 'U_curve':
             self.route_id = 0
-        self.start = self.starts[self.route_id]
-        self.dest = self.dests[self.route_id]
-        self.current_wpt = np.array((self.start[0], self.start[1],
-                                     self.start[5]))
+        #self.start = self.starts[self.route_id]
+        #self.dest = self.dests[self.route_id]
+        self.lanechange = False
+        self.start = self.world.map.get_spawn_points()[1]
+        self.current_wpt = np.array((self.start.location.x, self.start.location.y,
+                                     self.start.location.z))
 
-        self.spawn_transform = self._set_carla_transform(self.start)
+        self.spawn_transform = self.start#self._set_carla_transform(self.start)
         self.ego = Hero_Actor(self.world, self.spawn_transform, on_collision_fn=lambda e: self._on_collision(e),
                               on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
         self.hud = HUD(self.width, self.height)
@@ -190,11 +193,9 @@ class CarlaEnv(gym.Env):
 
         # Start Modules
         # Generate waypoints along the lap
-        self._generate_local_route(self.spawn_transform.location)
-        self.init_local_route = self.local_route
-        print(len(self.init_local_route))
+        self._generate_local_route()
         self.motionPlanner = MotionPlanner()
-        self.motionPlanner.start(self.init_local_route)
+        self.motionPlanner.start(self.global_route)
         self.ego.update_global_route_csp(self.motionPlanner.csp)
         self.ego_los_sensor = self.ego.los_sensor
         self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
@@ -215,7 +216,6 @@ class CarlaEnv(gym.Env):
             y=self.targetSpeed * np.sin(yaw))
         self.ego.set_velocity(init_speed)
         self.vehicleController.reset()
-        self.motionPlanner.start(self.init_local_route)
         self.motionPlanner.reset(0.0, 0.0, df_n=0, Tf=4, Vf_n=0, optimal_path=False)
         self.f_idx = 0
         self.terminal_state = False  # Set to True when we want to end episode
@@ -238,17 +238,17 @@ class CarlaEnv(gym.Env):
         self.v_buffer = deque([], maxlen=5)
         return self._get_obs()
 
-    def _generate_local_route(self, start):
-
-        self.local_route = np.empty((0, 3))
+    def _generate_local_route(self):
+        self.global_route = np.empty((0, 3))
         distance = 1
-        for i in range(100):
-            wp = self.world.map.get_waypoint(carla.Location(x=start.x, y=start.y, z=start.z),
+        for i in range(1520):
+            wp = self.world.map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
                                                          project_to_road=True).next(distance=distance)[0]
-            distance += 3.0
-            self.local_route = np.append(self.local_route,
+            distance += 2
+            self.global_route = np.append(self.global_route,
                                           [[wp.transform.location.x, wp.transform.location.y,
                                             wp.transform.location.z]], axis=0)
+
 
 
 
@@ -316,8 +316,7 @@ class CarlaEnv(gym.Env):
         loop_counter = 0
         flag = False
         #
-        while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
-                                          loop_counter < self.loop_break or self.lanechange):
+        while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or self.lanechange):
 
             loop_counter += 1
             ego_state = [self.ego.get_location().x, self.ego.get_location().y,
@@ -352,21 +351,11 @@ class CarlaEnv(gym.Env):
                 flag = True
                 break
 
-                # if self.local_route.any():
-                #     for p in self.motionPlanner.csp:
-                #         transform = carla.Transform()
-                #         transform.location.x = p.sx
-                #         transform.location.y = p.sy
-                #         transform.location.z = p.sz
-                #         self.world.debug.draw_point(transform.location, life_time=0.2)
-
         """
                 *********************************************************************************************************************
                 *********************************************** RL Observation ******************************************************
                 *********************************************************************************************************************
         """
-        self._generate_local_route(self.ego.get_location())
-        self.motionPlanner.start(self.local_route)
         self.fea_ext.update()
         self.fea_ext.observation
 
@@ -383,7 +372,9 @@ class CarlaEnv(gym.Env):
         last_speed = get_speed(self.ego)
         #speed reward
         sigmal_v = 0.6 if last_speed <= self.targetSpeed else 1.0
-        r_speed = self.w_r_speed * np.exp(-(last_speed / self.targetSpeed) ** 2 / 2 / (sigmal_v ** 2)) # 0<= r_speed <= self.w_r_speed
+        e_speed = abs(self.targetSpeed - last_speed)
+        #r_speed = self.w_r_speed * np.exp(-(last_speed / self.targetSpeed) ** 2 / 2 / (sigmal_v ** 2)) # 0<= r_speed <= self.w_r_speed
+        r_speed = self.w_r_speed * np.exp(-e_speed ** 2 / self.maxSpeed * self.w_speed)
         #  first two path speed change increases regardless so we penalize it differently
 
         speed_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
@@ -392,35 +383,36 @@ class CarlaEnv(gym.Env):
         if self.lanechange and speed_change_percentage < self.min_speed_gain:   # unmeaningful lanechange
             r_laneChange = -1 * r_speed * self.lane_change_penalty  # <= 0
 
-        # elif self.lanechange:
-        #     r_speed *= self.lane_change_reward
+        elif self.lanechange:
+            r_speed *= self.lane_change_reward
 
         positives = r_speed
         negatives = r_laneChange
 
-        # sigma_pos = 0.3
-        sigma_pos = self.sigma_pos
-        delta_yaw, wpt_yaw = self._get_delta_yaw()
-        road_heading = np.array([
-            np.cos(wpt_yaw / 180 * np.pi),
-            np.sin(wpt_yaw / 180 * np.pi)
-        ])
-        pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
-        self.distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
-            pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
-        #lateral_dist = self.distance_from_center / self.LANE_WIDTH
-        track_rewd = np.exp(- np.power(self.distance_from_center, 2) / 2 / sigma_pos / sigma_pos)
-        print("_track", track_rewd)
+        # # sigma_pos = 0.3
+        # sigma_pos = self.sigma_pos
+        # delta_yaw, wpt_yaw = self._get_delta_yaw()
+        # road_heading = np.array([
+        #     np.cos(wpt_yaw / 180 * np.pi),
+        #     np.sin(wpt_yaw / 180 * np.pi)
+        # ])
+        # pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
+        # self.distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
+        #     pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
+        # #lateral_dist = self.distance_from_center / self.LANE_WIDTH
+        # track_rewd = np.exp(- np.power(self.distance_from_center, 2) / 2 / sigma_pos / sigma_pos)
+        # print("_track", track_rewd)
+        #
+        # # angle reward
+        # sigma_yaw = self.sigma_angle
+        # yaw_err = delta_yaw * np.pi / 180
+        # ang_rewd = np.exp(- np.power(yaw_err, 2) / 2 / sigma_yaw / sigma_yaw)
+        #
+        # print("_ang", ang_rewd)
 
-        # angle reward
-        sigma_yaw = self.sigma_angle
-        yaw_err = delta_yaw * np.pi / 180
-        ang_rewd = np.exp(- np.power(yaw_err, 2) / 2 / sigma_yaw / sigma_yaw)
 
-        print("_ang", ang_rewd)
-
-
-        self.reward = (positives + negatives) * track_rewd * ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
+        # self.reward = (positives + negatives) * track_rewd * ang_rewd  # r_speed * (1 - lane_change_penalty) <= reward <= r_speed * lane_change_reward
+        self.rewad = positives + negatives
         # print(self.n_step, self.eps_rew)
         print("reward:", positives, negatives)
         """
@@ -454,11 +446,11 @@ class CarlaEnv(gym.Env):
             self.reward = self.off_the_road_penalty
             print('Collision !')
         # If at destination
-        elif np.sqrt((car_x - self.dest[0]) ** 2 + (car_y - self.dest[1]) ** 2) < 2.0:
-            print("Get destination! Episode Done.")
-            self.logger.debug('Get destination! Episode cost %d steps in route %d.' % (self.step_count, self.route_id))
-            # self.isSuccess = True
-            self.terminal_state = True
+        # elif np.sqrt((car_x - self.dest[0]) ** 2 + (car_y - self.dest[1]) ** 2) < 2.0:
+        #     print("Get destination! Episode Done.")
+        #     self.logger.debug('Get destination! Episode cost %d steps in route %d.' % (self.step_count, self.route_id))
+        #     # self.isSuccess = True
+        #     self.terminal_state = True
 
         # Update checkpoint for training
         self.total_reward += self.reward

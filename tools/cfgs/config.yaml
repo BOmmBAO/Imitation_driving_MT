@@ -6,7 +6,7 @@ CARLA:
   LANE_WIDTH: 3.5
   MAX_S: 300                                                   # [int] max frenet s value available in global route
   TASK_MODE: Lane                                               #'Straight', 'Curve', 'Long', 'Lane' or 'Lane_test'
-  MAX_LENGTH: 500
+  MAX_LENGTH: 100
 
 POLICY:
   NAME: PPO2                                                    # DDPG/TRPO/PPO2/A2C
