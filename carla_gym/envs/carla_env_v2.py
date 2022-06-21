@@ -69,8 +69,6 @@ class CarlaEnv(gym.Env):
         self.clock = pygame.time.Clock()
         self.synchronous = synchronous
         self.acceleration_ = 0
-        # self.global_route = np.load(
-        #         'road_maps/global_route_town04.npy')  # track waypoints (center lane of the second lane from left)
         self.global_route = None
         self.points_to_draw = []
 
