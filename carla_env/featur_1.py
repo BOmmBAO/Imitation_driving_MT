@@ -412,7 +412,7 @@ class FeatureExt():
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
         a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
-        #self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
+        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
         self.info_dict['lateral_dist_t'] = [distance_from_center]

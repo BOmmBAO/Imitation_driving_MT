@@ -5,7 +5,7 @@ import time
 import itertools
 from carla_gym.envs.wrapper import *
 from config import cfg
-from carla_env.misc import *
+from carla_env.misc import _vec_decompose
 from plan_control.path_planner import path_planner
 from plan_control.frenet_optimal_trajectory import FrenetPlanner as MotionPlanner
 from plan_control.controller import VehiclePIDController
@@ -120,7 +120,7 @@ class CarlaEnv(gym.Env):
         if self.synchronous:
             settings = self.world.get_settings()
             settings.synchronous_mode = True
-            #settings.no_rendering_mode = True
+            settings.no_rendering_mode = True
             settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
         """
@@ -156,25 +156,30 @@ class CarlaEnv(gym.Env):
         # Start Modules
         # Generate waypoints along the lap
         self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
-        self.motionPlanner = path_planner(self.world, self.ego, self.fea_ext)
+        self.pathPlanner = path_planner(self.world, self.fea_ext)
+        self.motionPlanner = MotionPlanner()
         self.ego_los_sensor = self.ego.los_sensor
         self.vehicleController = VehiclePIDController(self.ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
         self.IDM = IntelligentDriverModel(self.ego)
         self.world.tick()
 
     def reset(self, is_training=True):
-        self.ego.collision_sensor.reset()
+        self.ego.reset()
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
-        self.ego.reset()
+        self.ego.set_transform(self.spawn_transform)
         yaw = (self.ego.get_transform().rotation.yaw) * np.pi / 180.0
         init_speed = carla.Vector3D(
-            x=13.89 * np.cos(yaw),
-            y=13.89 * np.sin(yaw))
+            x=6.0 * np.cos(yaw),
+            y=6.0 * np.sin(yaw))
         self.ego.set_velocity(init_speed)
+        self.ego.set_angular_velocity(carla.Vector3D(x=0, y=0, z=0))
         self.ego.tick()
         self.vehicleController.reset()
-        self.rx, self.ry, self.ryaw, _ = self.motionPlanner.update( merge_dist = 8)
+        self.fea_ext.update()
+        _, _, _, csp = self.pathPlanner.update( merge_dist = 8)
+        self.motionPlanner.start(csp)
+        self.motionPlanner.reset(0, 0 , df_n=0, Tf=4, Vf_n=0, optimal_path=False)
         self.f_idx = 0
         self.terminal_state = False  # Set to True when we want to end episode
         self.closed = False  # Set to True when ESC is pressed
@@ -191,7 +196,6 @@ class CarlaEnv(gym.Env):
         self.distance_from_center = 0.0
         self.speed_accum = 0.0
         # self.laps_completed = 0.0
-        self.fea_ext.update()
         self.v_buffer = deque([], maxlen=5)
         return self._get_obs()
 
@@ -218,14 +222,15 @@ class CarlaEnv(gym.Env):
                 *********************************************** Motion Planner *******************************************************
                 **********************************************************************************************************************
         """
-        rx, ry, ryaw, s_sum = self.path.update()
+        rx, ry, _, csp = self.pathPlanner.update(merge_dist=8)
+        self.motionPlanner.start(csp)
         self.fea_ext.ref_display(rx, ry)
         temp = [self.ego.get_velocity(), self.ego.get_acceleration()]
         init_speed = speed = get_speed(self.ego)
         acc_vec = self.ego.get_acceleration()
         acc = math.sqrt(acc_vec.x ** 2 + acc_vec.y ** 2 + acc_vec.z ** 2)
         psi = math.radians(self.ego.get_transform().rotation.yaw)
-        ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, self.max_s]
+        ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, 40]
         fpath, self.lanechange, off_the_road = self.motionPlanner.run_step_single_path(ego_state, self.f_idx,
                                                                                        df_n=action[0], Tf=5,
                                                                                        Vf_n=action[1])
@@ -237,51 +242,49 @@ class CarlaEnv(gym.Env):
                 ************************************************* Controller *********************************************************
                 **********************************************************************************************************************
         """
-        # initialize flags
-        track_finished = False
-        # elapsed_time = lambda previous_time: time.time() - previous_time
-        # path_start_time = time.time()
-        ego_init_d, ego_target_d = fpath.d[0], fpath.d[-1]
+        #ego_init_d, ego_target_d = fpath.d[0], fpath.d[-1]
         # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
-        # loop_counter = 0
-        #elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
+        loop_counter = 0
+
         #while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or loop_counter < self.loop_break or self.lanechange):
+        while loop_counter <=5:
+            last_speed = get_speed(self.ego)
+            self.v_buffer.append(last_speed)
+            loop_counter += 1
+            ego_state = [self.ego.get_location().x, self.ego.get_location().y,
+                         math.radians(self.ego.get_transform().rotation.yaw), 0, 0, temp, self.max_s]
 
-        # loop_counter += 1
-        ego_state = [self.ego.get_location().x, self.ego.get_location().y,
-                     math.radians(self.ego.get_transform().rotation.yaw), 0, 0, temp, self.max_s]
+            self.f_idx = closest_wp_idx(ego_state, fpath, self.f_idx)
+            cmdWP = [fpath.x[self.f_idx], fpath.y[self.f_idx]]
+            cmdWP2 = [fpath.x[self.f_idx + 1], fpath.y[self.f_idx + 1]]
 
-        self.f_idx = closest_wp_idx(ego_state, fpath, self.f_idx)
-        cmdWP = [fpath.x[self.f_idx], fpath.y[self.f_idx]]
-        cmdWP2 = [fpath.x[self.f_idx + 1], fpath.y[self.f_idx + 1]]
+            # overwrite command speed using IDM
+            # for zombie cars
+            # ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
+            # ego_d = fpath.d[self.f_idx]
+            #vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
+            cmdSpeed = self.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=None)
 
-        # overwrite command speed using IDM
-        # for zombie cars
-        ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
-        ego_d = fpath.d[self.f_idx]
-        #vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
-        cmdSpeed = self.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=None)
+            # control = self.vehicleController.run_step(cmdSpeed, cmdWP)  # calculate control
+            control = self.vehicleController.run_step_2_wp(cmdSpeed, cmdWP, cmdWP2)  # calculate control
+            self.ego.apply_control(control)  # apply control
+            self.hud.tick(self.world, self.clock)
+            self.world.tick()
+            # Get most recent observation and viewer image
+            self.viewer_image = self._get_viewer_image()
+            last_speed = get_speed(self.ego)
+            self.v_buffer.append(last_speed)
+            if any(self.ego.collision_sensor.get_collision_history()):
+                self.terminal_state = True
+                break
+            elif last_speed > self.maxSpeed:
+                self.terminal_state = True
+                self.logger.debug('too fast')
+            elif len(self.v_buffer) ==5:
+                if np.mean(self.v_buffer) < 4 or np.mean(self.v_buffer) >20:
+                    self.terminal_state = True
 
-        # control = self.vehicleController.run_step(cmdSpeed, cmdWP)  # calculate control
-        control = self.vehicleController.run_step_2_wp(cmdSpeed, cmdWP, cmdWP2)  # calculate control
-        self.ego.apply_control(control)  # apply control
 
-        """
-                **********************************************************************************************************************
-                ************************************************ Update Carla ********************************************************
-                **********************************************************************************************************************
-        """
-        self.hud.tick(self.world, self.clock)
-        self.world.tick()
-    # Get most recent observation and viewer image
-        self.viewer_image = self._get_viewer_image()
-        # if any(self.ego.collision_sensor.get_collision_history()):
-        #     break
-        distance_traveled = ego_s - self.init_s
-        if distance_traveled < -5:
-            distance_traveled = self.max_s + distance_traveled
-        if distance_traveled >= self.track_length:
-            track_finished = True
         """
                 *********************************************************************************************************************
                 *********************************************** RL Observation ******************************************************
@@ -297,12 +300,9 @@ class CarlaEnv(gym.Env):
                       ********************************************* Episode Termination ****************************************************
                       **********************************************************************************************************************
               """
-        car_x = self.ego.get_location().x
-        car_y = self.ego.get_location().y
+
         self.center_lane_deviation += self.distance_from_center
         transform = self.ego.get_transform()
-        last_speed = get_speed(self.ego)
-        self.v_buffer.append(last_speed)
         self.distance_traveled += self.previous_location.distance(transform.location)
         self.previous_location = transform.location
         self.speed_accum += self.ego.get_speed()
@@ -310,20 +310,11 @@ class CarlaEnv(gym.Env):
         # if self.distance_from_center >= 1.2:
         #     print('Collision happened because of off the road!')
         #     self.terminal_state = True
-
-        if last_speed > self.maxSpeed:
-            self.terminal_state = True
-            self.logger.debug('too fast')
-        elif off_the_road:
+        if off_the_road:
             # print('Collision happened!')
             # done = True
             self.terminal_state = True
-        elif len(self.v_buffer) == 50:
-            v_norm_mean = np.mean(self.v_buffer)
-            if v_norm_mean < 4:
-                self.terminal_state = True
-                self.logger.debug('too low')
-                print('low!')
+
         elif len(self.ego.collision_sensor.get_collision_history()) != 0:
             self.terminal_state = True
             print('Collision !')
@@ -334,30 +325,42 @@ class CarlaEnv(gym.Env):
                        **********************************************************************************************************************
                """
         # Calculate reward
+
         if not self.terminal_state:
-            e_speed = abs(self.targetSpeed - last_speed)
-            r_speed = self.w_r_speed * np.exp(
-                -e_speed ** 2 / self.maxSpeed * self.w_speed)  # 0<= r_speed <= self.w_r_speed
-            #  first two path speed change increases regardless so we penalize it differently
-            print(r_speed)
+            car_x = self.ego.get_location().x
+            car_y = self.ego.get_location().y
+            self.current_wpt = self._get_waypoint_xyz()
+            delta_yaw, wpt_yaw = self._get_delta_yaw()
+            road_heading = np.array([
+                np.cos(wpt_yaw / 180 * np.pi),
+                np.sin(wpt_yaw / 180 * np.pi)
+            ])
+            pos_err_vec = np.array((car_x, car_y)) - self.current_wpt[0:2]
+            self.distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
+                pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
+            centering_factor = max(1 - self.distance_from_center * 2 / 1.2, 0.0)
+            angle_factor = max(1.0 - abs(np.deg2rad(delta_yaw) / np.deg2rad(20)), 0.0)
+            speed_kmh = 3.6 * last_speed
+            if speed_kmh < 14.4:  # When speed is in [0, min_speed] range
+                speed_reward = speed_kmh / 14.4  # Linearly interpolate [0, 1] over [0, min_speed]
+            elif speed_kmh > self.targetSpeed * 3.6:  # When speed is in [target_speed, inf]
+                # Interpolate from [1, 0, -inf] over [target_speed, max_speed, inf]
+                speed_reward = 1.0 - (speed_kmh - self.targetSpeed * 3.6) / (
+                            self.maxSpeed * 3.6 - self.targetSpeed * 3.6)
+            else:  # Otherwise
+                speed_reward = 1.0  # Return 1 for speeds in range [min_speed, target_speed]
             spd_change_percentage = (last_speed - init_speed) / init_speed if init_speed != 0 else -1
             r_laneChange = 0
 
             if self.lanechange and spd_change_percentage < self.min_speed_gain:
-                r_laneChange = -1 * r_speed * self.lane_change_penalty  # <= 0
+                speed_reward = speed_reward * (1-self.lane_change_penalty)  # <= 0
 
-            elif self.lanechange:
-                r_speed *= self.lane_change_reward
+            # elif self.lanechange:
+            #     speed_reward *= self.lane_change_reward
 
-            positives = r_speed
-            negatives = r_laneChange
-            self.reward = positives + negatives
+            self.reward = speed_reward * centering_factor * angle_factor
         else:
-            self.reward -= 10
-        # Update checkpoint for training
-        # if track_finished:
-        #     self.logger.debug('Time out! Episode cost %d steps in route.' % (self.step_count))
-        #     self.terminal_state = True
+            self.reward = -10
 
         # Update checkpoint for training
         self.total_reward += self.reward
@@ -367,7 +370,7 @@ class CarlaEnv(gym.Env):
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 92)
+        features_space = np.array([np.inf] * 94)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])
         return spaces.Box(-features_space, features_space, dtype='float32')

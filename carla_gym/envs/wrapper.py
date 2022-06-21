@@ -22,7 +22,13 @@ HERO_DEFAULT_SCALE = 1.0
 
 PIXELS_AHEAD_VEHICLE = 150
 
-
+class STATUS:
+    FOLLOWING = 0
+    START_LANE_CHANGE_L = 1
+    LANE_CHANGING_L = 2
+    START_LANE_CHANGE_R = 3
+    LANE_CHANGING_R = 4
+    STOPPING = 5
 
 def print_transform(transform):
     print("Location(x={:.2f}, y={:.2f}, z={:.2f}) Rotation(pitch={:.2f}, yaw={:.2f}, roll={:.2f})".format(
@@ -357,6 +363,7 @@ class Hero_Actor(CarlaActorBase):
         self.control = carla.VehicleControl()
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
         self.actors_with_transforms = []
+        self.status = STATUS.FOLLOWING
 
         if callable(on_collision_fn):
             self.collision_sensor = CollisionSensor(world, self, on_collision_fn=on_collision_fn)
@@ -401,15 +408,7 @@ class Hero_Actor(CarlaActorBase):
 
     def reset(self):
         self.los_sensor.reset()
-        self.init_s = 0
-        self.init_d = 0
-        x, y, z, yaw = frenet_to_inertial(self.init_s, self.init_d, self.global_csp)
-        z += 0.1
-        self.actor.set_velocity(carla.Vector3D(x=0, y=0, z=0))
-        self.actor.set_angular_velocity(carla.Vector3D(x=0, y=0, z=0))
-        transform = carla.Transform(location=carla.Location(x=x, y=y, z=z),
-                                    rotation=carla.Rotation(pitch=0.0, yaw=math.degrees(yaw), roll=0.0))
-        self.actor.set_transform(transform)
+        self.collision_sensor.reset()
 
     def decision_tick(self):
         actors = self.world.get_actors()

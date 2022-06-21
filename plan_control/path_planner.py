@@ -6,6 +6,7 @@ import math
 from carla_env.rule_decision import STATUS
 
 
+
 class path_planner():
 
     def __init__(self, env, fea_ext):
@@ -17,6 +18,7 @@ class path_planner():
         self.merge_point = None
         self.target_lane = None
         self.junction_wps = None
+        self.frenet_path = None
 
     def update(self, merge_dist):
 
@@ -72,7 +74,7 @@ class path_planner():
             ryaw.append(common.pi_2_pi(cubicspline.calc_yaw(i_s)))
             rk.append(cubicspline.calc_curvature(i_s))
 
-        return rx, ry, ryaw, cubicspline.s[-1]
+        return rx, ry, ryaw, cubicspline
 
     def laneChange_path(self, car, lane_target, merge_point):
         # generate reference line
@@ -114,7 +116,7 @@ class path_planner():
         new_point, nearest_dist, index = None, 1000, 0
         for i in range(len(self.junction_wps)):
             pos = self.junction_wps[i].transform.location
-            _dist = np.hypot(pos.x-self.car.x, pos.y-self.car.y)
+            _dist = np.hypot(pos.x-self.car.get_location().x, pos.y-self.car.get_location().y)
             if _dist < nearest_dist:
                 nearest_dist = _dist
                 new_point = pos
@@ -151,38 +153,4 @@ class path_planner():
                 break
         return wp_l
 
-    def run_step_single_path(self, ego_state, idx, df_n=0, Tf=4, Vf_n=0):
-        """
-        input: ego states, current frenet path's waypoint index, actions
-        output: frenet path
-        actions: final values for frenet lateral displacement (d), time, and speed
-        """
-
-        # estimate frenet state
-        f_state = self.estimate_frenet_state(ego_state, idx)
-        # convert lateral action value from range (-1, 1) to the desired value in [-3.5, 0.0, 3.0, 7.0]
-        if df_n < -0.33:
-            df = -1
-        elif df_n > 0.33:
-            df = 1
-        else:
-            df = 0
-
-        d = self.path.d[idx]  # CHANGE THIS! when f_state estimation works fine. (self.path.d[idx])(d = f_state[3])
-        _df = np.clip(df * self.LANE_WIDTH + d, -2 * self.LANE_WIDTH, 3 * self.LANE_WIDTH).item()
-        df = closest([self.LANE_WIDTH * lane_n for lane_n in range(-1, 3)], _df)
-        # df = np.round(df_n[0]) * self.LANE_WIDTH + d  # allows agent to drive off the road
-
-        # lanechange should be set true if there is a lane change
-        lanechange = True if abs(df - d) >= 3 else False
-
-        # off-the-road attempt is recorded
-        off_the_road = True if _df < -4 or _df > 7.5 else False
-
-        Vf = self.speed_radius * Vf_n + self.speed_center
-
-        # Frenet motion planning
-        self.path = self.generate_single_frenet_path(f_state, df=df, Tf=Tf, Vf=Vf)
-
-        return self.path, lanechange, off_the_road
 
