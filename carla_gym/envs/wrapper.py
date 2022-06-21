@@ -343,9 +343,9 @@ class Vehicle(CarlaActorBase):
 # ===============================================================================
 
 class World():
-    def __init__(self, client, world):
+    def __init__(self, client):
         # Set map
-        self.world = client.load_world(world)
+        self.world = client.load_world('Town04')
         self.map = self.world.get_map()
 
         # Set weather

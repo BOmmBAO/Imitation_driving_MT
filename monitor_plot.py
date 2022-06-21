@@ -73,10 +73,10 @@ def plot_rewards(agents, window_size=100, colors=None, alpha=0.2, lr=None, n_tim
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--agent_ids', nargs='+', type=int, default=None)
+    parser.add_argument('--agent_ids', nargs='+', type=int, default=1)
     parser.add_argument('--window_size', type=int, default=100)
-    parser.add_argument('--colors', nargs='+', type=str, default=None)
-    parser.add_argument('--lr', nargs='+', type=str, default=None)
+    parser.add_argument('--colors', nargs='+', type=str, default='red')
+    parser.add_argument('--lr', nargs='+', type=str, default='PPO2')
     parser.add_argument('--alpha', type=float, default=0.15)
     parser.add_argument('--n_steps', type=float, default=1e7)
     args = parser.parse_args()

@@ -38,9 +38,9 @@ class FeatureExt():
         self.waypoints_buffer = None
         self.waypoints_buffer_lane_id = None
         self.wp_ds = 2
-        self.wp_horizon = 70
-        self.distance_rate = 4.0
-        self.wp_index = 12
+        self.wp_horizon = 81
+        self.distance_rate = 5.0
+        self.wp_index = 17
         self.distance = self._get_dis()
 
         self.visible_zombie_cars = None
@@ -85,28 +85,23 @@ class FeatureExt():
     # -- Functions about Waypoints Extraction --------------------------------------
     # ==============================================================================
     def _get_dis(self):
-        a = 1.
-        dis = []
-        for i in range(self.wp_index):
-            dis.append(a)
-            a += self.distance_rate
+        # a = 1.
+        # dis = []
+        # for i in range(self.wp_index):
+        #     dis.append(a)
+        #     a += self.distance_rate
+        dis = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 13.0, 16.0, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 48.0, 54.0, 70.0]
         return dis
 
     def waypoints_buffer_update(self):
 
         def uniform_wps(wp, d_s, max_sample):
-            seq = 1.0
+            seq = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 13.0, 16.0, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 48.0, 54.0, 70.0,
+                   77.0, 84.0, 91.0, 99.0]
             wp_l = []
-            while True:
-                wp_l.append(wp.next(seq)[0])
-                seq += self.distance_rate
-
-                # if wp_l[-1].is_junction:
-                #     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
-                #     wp_l.extend(_lane.next_until_lane_end(1.0))
-                #     break
-                if len(wp_l) >= max_sample:
-                    break
+            for i in seq:
+                wp_l.append(wp.next(i)[0])
+                #seq += self.distance_rate
             return wp_l
 
         count = 50
@@ -162,16 +157,16 @@ class FeatureExt():
     def find_road_border(self, wp_list):
 
         def local_wp(wp, max_distance=70):
-            seq = 1.0
+            seq = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 13.0, 16.0, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 48.0, 54.0, 70.0]
             wp_l = []
-            while True:
-                wp_l.append(wp.next(seq)[0])
-                seq += self.distance_rate
-                if len(wp_l) >= self.wp_index:
-                    break
-            while len(wp_l) < self.wp_index:
-                print("The number of waypoints is wrong!")
-                wp_l.append(wp_l[-1])
+            for i in seq:
+                wp_l.append(wp.next(i)[0])
+                #seq += self.distance_rate
+                # if len(wp_l) >= self.wp_index:
+                #     break
+            # while len(wp_l) < self.wp_index:
+            #     print("The number of waypoints is wrong!")
+            #     wp_l.append(wp_l[-1])
             return wp_l
 
         def generate_position_list(wp_l, side='right'):
@@ -386,11 +381,12 @@ class FeatureExt():
             delta_yaw -= 360
         elif -360 <= delta_yaw and delta_yaw <= -180:
             delta_yaw += 360
+        delta_yaw = np.deg2rad(delta_yaw)
 
         for d in distances:
             wpt_heading = current_wpt.next(d)[0].transform.rotation.yaw
-            delta_heading = delta_angle_between(current_road_heading,
-                                                wpt_heading)
+            delta_heading = np.deg2rad(delta_angle_between(current_road_heading,
+                                                wpt_heading))
             angles.append(delta_heading)
 
         return angles, delta_yaw, wpt_yaw
@@ -416,7 +412,7 @@ class FeatureExt():
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
         a_la, a_lon = _vec_decompose(a_t_absolute, ego_heading_vec)
 
-        self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
+        #self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
         self.info_dict['lateral_dist_t'] = [distance_from_center]
@@ -480,10 +476,8 @@ class FeatureExt():
         # Transform into vector
         self.info_dict['inner_line_right'] = _to_vector(ego_pos, inner_line_r)
         self.info_dict['inner_line_left'] = _to_vector(ego_pos, inner_line_l)
-        self.info_dict['outer_line_right'] = _to_vector(ego_pos, outer_line_r)
-        self.info_dict['outer_line_left'] = _to_vector(ego_pos, outer_line_l)
-        # print('inner',len(self.info_dict['inner_line_right']))
-        # print('outer',len(self.info_dict['outer_line_right']))
+        #self.info_dict['outer_line_right'] = _to_vector(ego_pos, outer_line_r)
+        #self.info_dict['outer_line_left'] = _to_vector(ego_pos, outer_line_l)
     def a2r(self, angle):
         return angle / 180 * np.pi
 
