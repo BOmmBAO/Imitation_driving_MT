@@ -355,7 +355,6 @@ class Hero_Actor(CarlaActorBase):
 
         # Maintain vehicle control
         self.control = carla.VehicleControl()
-        self.global_csp = None
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
         self.actors_with_transforms = []
 

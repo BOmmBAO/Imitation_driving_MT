@@ -15,7 +15,7 @@ Ref:
 import numpy as np
 import copy
 import math
-from agents.local_planner import cubic_spline_planner
+from plan_control import cubic_spline
 from config import cfg
 
 
@@ -227,7 +227,7 @@ class FrenetPlanner:
         self.speed_center = (max_speed + min_speed) / 2
         self.speed_radius = (max_speed - min_speed) / 2
 
-    def update_global_route(self, global_route):
+    def update_global_route(self, rx, ry, ryaw):
         """
         fit an spline to the updated global route in inertial frame
         """
@@ -238,7 +238,7 @@ class FrenetPlanner:
             wx.append(p[0])
             wy.append(p[1])
             wz.append(p[2])
-        self.csp = cubic_spline_planner.Spline3D(wx, wy, wz)
+        self.csp = cubic_spline.Spline3D(wx, wy, wz)
 
     def update_obstacles(self, ob):
         self.ob = ob
@@ -531,9 +531,9 @@ class FrenetPlanner:
 
         return bestpath_idx, fplist
 
-    def start(self, route):
+    def start(self, rx, ry, ryaw):
         self.steps = 0
-        self.update_global_route(route)
+        self.update_global_route(rx, ry, ryaw)
 
     def reset(self, s, d, df_n=0, Tf=4, Vf_n=0, optimal_path=True):
         # module_world reset should be executed beforehand to update the initial s and d values

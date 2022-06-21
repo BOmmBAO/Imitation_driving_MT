@@ -6,7 +6,7 @@ CARLA:
   LANE_WIDTH: 3.5
   MAX_S: 3000                                                   # [int] max frenet s value available in global route
   TASK_MODE: Lane                                               #'Straight', 'Curve', 'Long', 'Lane' or 'Lane_test'
-  MAX_LENGTH: 1000
+  MAX_LENGTH: 3000
 
 POLICY:
   NAME: PPO2                                                    # DDPG/TRPO/PPO2/A2C
@@ -21,7 +21,7 @@ GYM_ENV:
   TARGET_SPEED: 13.89 #13.89                                     # Ego's target speed
   MAX_SPEED: 20 #25
   MAX_ACC: 6.878                                                # equivalent to 24.7608 km/h.s for Tesla model 3
-  LOOK_BACK: 30                                                 # [int] Steps to look back at last path for observation sequence vector
+  LOOK_BACK: 25                                                 # [int] Steps to look back at last path for observation sequence vector
   TIME_STEP: 4                                                  # [int] Steps to look back at last path for observation sequence vector (TIME_STEP + 1)
   LOOP_BREAK: 20                                                # NOT USED [int] steps to break path following while loop  - must be greater than LOOK_BACK
   DISTN_FRM_VHCL_AHD: 100                                       # Effective distance to keep from vehicle ahead for IDM

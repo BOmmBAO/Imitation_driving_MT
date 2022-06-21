@@ -29,7 +29,7 @@ class path_planner():
             # print("Current status: Start Left changing")
             left_lane = self.fea_extract.wp_list[0].get_left_lane()
             self.merge_point = self.merge_point_calcu(left_lane, merge_dist)
-            self.target_lane = self.env.world.get_map().get_waypoint(self.merge_point)
+            self.target_lane = self.env.map().get_waypoint(self.merge_point)
             rx, ry, ryaw, s_sum = self.laneChange_path(self.car, self.target_lane, self.merge_point)
             self.car.status = STATUS.LANE_CHANGING_L
             self.fea_extract.point_display(self.merge_point)
@@ -43,7 +43,7 @@ class path_planner():
             # print("Current status: Start Right changing")
             right_lane = self.fea_extract.wp_list[0].get_right_lane()
             self.merge_point = self.merge_point_calcu(right_lane, merge_dist)
-            self.target_lane = self.env.world.get_map().get_waypoint(self.merge_point)
+            self.target_lane = self.env.map().get_waypoint(self.merge_point)
             rx, ry, ryaw, s_sum = self.laneChange_path(self.car, self.target_lane, self.merge_point)
             self.car.status = STATUS.LANE_CHANGING_R
             self.fea_extract.point_display(self.merge_point)
@@ -150,4 +150,39 @@ class path_planner():
             if seq > max_distance:
                 break
         return wp_l
+
+    def run_step_single_path(self, ego_state, idx, df_n=0, Tf=4, Vf_n=0):
+        """
+        input: ego states, current frenet path's waypoint index, actions
+        output: frenet path
+        actions: final values for frenet lateral displacement (d), time, and speed
+        """
+
+        # estimate frenet state
+        f_state = self.estimate_frenet_state(ego_state, idx)
+        # convert lateral action value from range (-1, 1) to the desired value in [-3.5, 0.0, 3.0, 7.0]
+        if df_n < -0.33:
+            df = -1
+        elif df_n > 0.33:
+            df = 1
+        else:
+            df = 0
+
+        d = self.path.d[idx]  # CHANGE THIS! when f_state estimation works fine. (self.path.d[idx])(d = f_state[3])
+        _df = np.clip(df * self.LANE_WIDTH + d, -2 * self.LANE_WIDTH, 3 * self.LANE_WIDTH).item()
+        df = closest([self.LANE_WIDTH * lane_n for lane_n in range(-1, 3)], _df)
+        # df = np.round(df_n[0]) * self.LANE_WIDTH + d  # allows agent to drive off the road
+
+        # lanechange should be set true if there is a lane change
+        lanechange = True if abs(df - d) >= 3 else False
+
+        # off-the-road attempt is recorded
+        off_the_road = True if _df < -4 or _df > 7.5 else False
+
+        Vf = self.speed_radius * Vf_n + self.speed_center
+
+        # Frenet motion planning
+        self.path = self.generate_single_frenet_path(f_state, df=df, Tf=Tf, Vf=Vf)
+
+        return self.path, lanechange, off_the_road
 

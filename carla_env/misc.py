@@ -108,7 +108,8 @@ def closest_wp_idx(ego_state, fpath, f_idx, w_size=10):
                 and inertial_to_body_frame(ego_location, temp_wp[0], temp_wp[1], ego_state[2])[0] > 0.0:
             closest_wp_index = i
             min_dist = temp_dist
-
+        if closest_wp_index ==0:
+            closest_wp_index = 1
     return f_idx + closest_wp_index
 
 def replace_nans(data: dict, nan=0.0, pos_inf=0.0, neg_inf=0.0):
