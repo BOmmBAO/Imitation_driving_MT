@@ -4,7 +4,7 @@
 CARLA:
   DT: 0.1                                                       # Set to -1 for variable time-step (real-world simulation)
   LANE_WIDTH: 3.5
-  MAX_S: 200                                                   # [int] max frenet s value available in global route
+  MAX_S: 3000                                                   # [int] max frenet s value available in global route
   TASK_MODE: Lane                                               #'Straight', 'Curve', 'Long', 'Lane' or 'Lane_test'
   MAX_LENGTH: 1000
 
@@ -24,7 +24,7 @@ GYM_ENV:
   LOOK_BACK: 30                                                 # [int] Steps to look back at last path for observation sequence vector
   TIME_STEP: 4                                                  # [int] Steps to look back at last path for observation sequence vector (TIME_STEP + 1)
   LOOP_BREAK: 20                                                # NOT USED [int] steps to break path following while loop  - must be greater than LOOK_BACK
-  DISTN_FRM_VHCL_AHD: 200                                       # Effective distance to keep from vehicle ahead for IDM
+  DISTN_FRM_VHCL_AHD: 100                                       # Effective distance to keep from vehicle ahead for IDM
 
 RL:
   W_SPEED: 5                                                    # Speed Error Resolution
@@ -35,7 +35,7 @@ RL:
   LANE_CHANGE_REWARD: 2                                         # Meaningful Lane Change Reward (w*speed_reward)
   W_R_POS: 3
   W_R_ANGLE: 4
-  OFF_THE_ROAD: -20                                             # Off-the-road attempt penalty
+  OFF_THE_ROAD: -10                                             # Off-the-road attempt penalty
   COLLISION: -10                                                # Collison penalty
   SIGMA_POS: 0.3
   SIGMA_ANGLE: 0.4

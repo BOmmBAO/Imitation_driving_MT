@@ -220,12 +220,10 @@ class CarlaEnv(gym.Env):
 
         if self.distance_from_center >= 1.2:
             print('Collision happened because of off the road!')
-            self.reward = self.off_the_road_penalty
             self.terminal_state = True
 
         elif last_speed > self.maxSpeed:
             self.terminal_state = True
-            self.reward = self.off_the_road_penalty
             self.logger.debug('too fast')
 
         elif len(self.v_buffer) == 50:
@@ -234,7 +232,7 @@ class CarlaEnv(gym.Env):
                 self.terminal_state = True
                 self.logger.debug('too low')
                 print('low!')
-        elif any(self.ego.collision_sensor.get_collision_history()):
+        elif len(self.ego.collision_sensor.get_collision_history()) != 0:
             self.terminal_state = True
             self.reward = self.off_the_road_penalty
             print('Collision !')
