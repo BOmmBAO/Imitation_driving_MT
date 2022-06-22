@@ -1,5 +1,9 @@
 import os
 import git
+import wandb
+import tensorflow as tf
+
+wandb.init(project="MT1", entity="baowenhua")
 import pygame
 import gym
 import carla_gym
@@ -11,14 +15,14 @@ from pathlib import Path
 currentPath = osp.dirname(osp.abspath(inspect.getfile(inspect.currentframe())))
 # sys.path.insert(1, currentPath + '/agents/stable_baselines/')
 import shutil
-from carla_gym.envs import Carla_decision
+#from carla_gym.envs import Carla_decision
 from carla_gym.envs import Carla_e2e
 
 from rl_algorithm.stable_baselines.bench import Monitor
 from rl_algorithm.stable_baselines.common.policies import MlpPolicy as CommonMlpPolicy
 from rl_algorithm.stable_baselines.common.policies import MlpLstmPolicy as CommonMlpLstmPolicy
 from rl_algorithm.stable_baselines.common.policies import CnnPolicy as CommonCnnPolicy
-from rl_algorithm.stable_baselines import PPO2
+from rl_algorithm.stable_baselines import TRPO
 from rl_algorithm.stable_baselines import A2C
 
 from rl_algorithm.stable_baselines.common.policies import BasePolicy, nature_cnn, register_policy, sequence_1d_cnn, sequence_1d_cnn_ego_bypass_tc
@@ -47,7 +51,7 @@ def parse_args_cfgs():
         help='Gamma correction of the camera (default: 2.2)')
     parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=int, default=2)
+    parser.add_argument('--agent_id', type=int, default=1)
     parser.add_argument('--num_timesteps', type=float, default=1e6)
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
@@ -85,8 +89,9 @@ def parse_args_cfgs():
 if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
-    #env = Carla_e2e(args=args)
-    env = Carla_decision(args=args)
+    test = wandb.init(project="MT1", entity="baowenhua", name='e2eTown03')
+    env = Carla_e2e(test, args=args)
+    #env = Carla_decision(test, args=args)
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------
@@ -121,8 +126,8 @@ if __name__ == '__main__':
             env = Monitor(env, 'logs/', info_keywords=('reserved',))                                   # logging monitor
         model_dir = save_path + '{}_final_model'.format(cfg.POLICY.NAME)                               # model save/load directory
 
-        if cfg.POLICY.NAME == 'PPO2':
-            model = PPO2(policy[cfg.POLICY.NET], env, verbose=0, model_dir=save_path, policy_kwargs=None)
+        if cfg.POLICY.NAME == 'TRPO':
+            model = TRPO(policy[cfg.POLICY.NET], env, verbose=0, model_dir=save_path)
         elif cfg.POLICY.NAME =='A2C':
             model = A2C(policy[cfg.POLICY.NET], env, verbose=1, model_dir=save_path, policy_kwargs={'cnn_extractor': eval(cfg.POLICY.CNN_EXTRACTOR)})
         else:
@@ -162,8 +167,8 @@ if __name__ == '__main__':
 
         model_dir = save_path + args.test_model  # model save/load directory
         print('{} is Loading...'.format(args.test_model))
-        if cfg.POLICY.NAME == 'PPO2':
-            model = PPO2.load(model_dir)
+        if cfg.POLICY.NAME == 'TRPO':
+            model = TRPO.load(model_dir)
         elif cfg.POLICY.NAME == 'A2C':
             model = A2C.load(model_dir)
         else:

@@ -4,7 +4,7 @@ import numpy as np
 from carla_env import common
 import matplotlib.pyplot as plt
 plt.ion()
-from carla_env.misc import _vec_decompose
+from carla_env.misc import _vec_decompose, delta_angle_between
 
 class STATUS:
 
@@ -18,15 +18,15 @@ class STATUS:
 
 class FeatureExt():
 
-    def __init__(self, world_modul, dt, vehicle):
+    def __init__(self, world, dt, vehicle):
         self.autopilot = False
         self.dim = '3d'
         self.traffic_light_flag = None
-        self.world = world_modul.world
+        self.world = world
         self.vehicle = vehicle
         self.vehicle_info = VehicleInfo(vehicle)
-        self.map = world_modul.map
-        self.zombie_cars = None
+        self.map = self.world.get_map()
+        self.zombie_cars = world.zombie_cars
         self.cur_lane = None
         self.cur_lane_width = None
         self.cur_wp = None
@@ -36,13 +36,14 @@ class FeatureExt():
 
         self.waypoints_buffer = None
         self.waypoints_buffer_lane_id = None
-        self.wp_ds = 2
+        self.wp_ds = 1.0
         self.wp_horizon = 70
         self.distance_rate = 1.4
-        self.wp_index = self.exponential_index(horizon=70)
+        self.wp_index = [0, 1, 2, 4, 6, 9, 12, 15, 18, 22, 26, 31, 36, 41, 47, 53, 69]
+        self.distance = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 13.0, 16.0, 19.0, 23.0, 27.0, 32.0, 37.0, 42.0, 48.0, 54.0, 70.0]
 
-        self.visible_zombie_cars = None
-        self.show_dt = 0.2
+        self.visible_zombie_cars = world.visible_zombie_cars
+        self.show_dt = self.dt
         self.is_junction = False
 
         self.stop_sign = False
@@ -54,7 +55,6 @@ class FeatureExt():
 
         self.observation = None
         self.info_dict = {}
-        self.draw_dic = {}
         self.obs_index = None
         self.pre_obs_index = None
         self.zombie_num = 0
@@ -65,9 +65,11 @@ class FeatureExt():
 
         self.i = 0
 
+
     def update(self):
         self.vehicle_info.update()
         self.current_loc = self.vehicle.get_location()
+        self.current_wpt = self._get_waypoint_xyz()
         self.cur_lane = self.map.get_waypoint(self.current_loc)
         self.cur_lane_width = self.cur_lane.lane_width
         self.wp_list = self.wp_list_extract(self.cur_lane)
@@ -82,20 +84,21 @@ class FeatureExt():
     # ==============================================================================
     # -- Functions about Waypoints Extraction --------------------------------------
     # ==============================================================================
+
     def waypoints_buffer_update(self):
 
         def uniform_wps(wp, d_s, max_sample):
-            seq = 1.0
+            seq = d_s
             wp_l = []
             while True:
                 wp_l.append(wp.next(seq)[0])
-                seq += 1.0
+                seq += d_s
 
                 if wp_l[-1].is_junction:
                     _lane = self.map.get_waypoint(wp_l[-1].transform.location)
-                    wp_l.extend(_lane.next_until_lane_end(1.0))
+                    wp_l.extend(_lane.next_until_lane_end(d_s))
                     break
-                if len(wp_l) >= max_sample:
+                if len(wp_l) > max_sample:
                     break
             return wp_l
 
@@ -105,14 +108,14 @@ class FeatureExt():
             else:
                 return True
 
-        count = 100
+        count = 100 / self.wp_ds
 
         if self.waypoints_buffer is None:
             _lane = self.map.get_waypoint(self.current_loc)
             self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
 
         # Find the nearest point in the waypoints buffer
-        nearest_dist, index = 70, 0
+        nearest_dist, index = 100, 0
         for i in range(len(self.waypoints_buffer)):
             pos = self.waypoints_buffer[i].transform.location
             _dist = np.hypot(pos.x - self.current_loc.x, pos.y - self.current_loc.y)
@@ -121,7 +124,7 @@ class FeatureExt():
                 index = i
         self.waypoints_buffer = self.waypoints_buffer[index:]
 
-        if check_lane_change(self.cur_lane, self.waypoints_buffer[-1]):
+        if check_lane_change(self.cur_lane, self.waypoints_buffer[index]):
             _lane = self.map.get_waypoint(self.current_loc)
             self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
 
@@ -132,13 +135,10 @@ class FeatureExt():
                                                      count - len(self.waypoints_buffer)))
 
     def expon_down_sample(self):# extract points with rate 1.4
-        wp_list = self.waypoints_buffer
-        wp = [wp_list[0], wp_list[1], wp_list[2], wp_list[3], \
-              wp_list[5], wp_list[7], wp_list[10], wp_list[14], \
-              wp_list[20], wp_list[28], wp_list[40], wp_list[56]]
-        # for index in self.wp_index[1:]:
-        #     if index < len(self.waypoints_buffer):
-        #         wp.append(self.waypoints_buffer[index])
+        wp = []
+        for index in self.wp_index:
+            if index < len(self.waypoints_buffer):
+                wp.append(self.waypoints_buffer[index])
         while len(wp) < len(self.wp_index):
             print("The number of waypoints is wrong!")
             wp.append(wp[-1])
@@ -179,29 +179,16 @@ class FeatureExt():
             wp_l = wp_side_extract(wp_l, cur_wp, 'left')
         return wp_l
 
-    def exponential_index(self, horizon):
-        exp_index = []
-        time = 0
-        seq = 1.4
-        while seq <= horizon:
-            exp_index.append(time)
-            seq *= 1.4
-            time += 1
-        return exp_index
-
     def find_road_border(self, wp_list):
 
-        def local_wp(wp, max_distance=70):
-            # seq = 1.0
-            # wp_l = []
-            # while True:
-            #     wp_l.append(wp.next(seq)[0])
-            #     seq *= 1.4
-            #     if seq > max_distance:
-            #         break
-            wp_l = [wp.next(1)[0], wp.next(2)[0], wp.next(3)[0], wp.next(4)[0], \
-                   wp.next(6)[0], wp.next(8)[0], wp.next(11)[0], wp.next(15)[0], \
-                   wp.next(21)[0], wp.next(29)[0], wp.next(41)[0], wp.next(57)[0]]
+        def local_wp(wp, seq):
+            seq = seq
+            wp_l = []
+            for i in seq:
+                wp_l.append(wp.next(i)[0])
+                #seq += self.distance_rate
+                # if len(wp_l) >= self.wp_index:
+                #     break
             while len(wp_l) < len(self.wp_index):
                 print("The number of waypoints is wrong!")
                 wp_l.append(wp_l[-1])
@@ -225,12 +212,12 @@ class FeatureExt():
         outer_line_r, outer_line_l = None, None
         for wp in wp_list:
             if wp.lane_change == carla.LaneChange.Right:
-                outer_line_l = generate_position_list(local_wp(wp), 'left')
+                outer_line_l = generate_position_list(local_wp(wp, self.distance), 'left')
             elif wp.lane_change == carla.LaneChange.Left:
-                outer_line_r = generate_position_list(local_wp(wp), 'right')
+                outer_line_r = generate_position_list(local_wp(wp, self.distance), 'right')
             elif wp.lane_change == carla.LaneChange.NONE:
-                outer_line_l = generate_position_list(local_wp(wp), 'left')
-                outer_line_r = generate_position_list(local_wp(wp), 'right')
+                outer_line_l = generate_position_list(local_wp(wp, self.distance), 'left')
+                outer_line_r = generate_position_list(local_wp(wp, self.distance), 'right')
         if outer_line_l is None or outer_line_r is None:
             print("Extraction for outer road lines fails!")
         return outer_line_r, outer_line_l
@@ -253,7 +240,7 @@ class FeatureExt():
     # -- Features used in Rule-based Decision---------------------------------------
     # ==============================================================================
     def find_lead_car(self):
-        if self.zombie_cars is None:
+        if len(self.zombie_cars) == 0:
             return None
         forward_cars = []
         ego_pos = [self.vehicle.get_location().x, self.vehicle.get_location().y]
@@ -370,25 +357,81 @@ class FeatureExt():
     def obs_update(self, one_car=True):
         #feature list
         self.info_dict.clear()
-        self.draw_dic.clear()
-        self.ext_egocar_info(self.vehicle, local_frame = False)
-        if not one_car:
+        self.ext_egocar_info(self.vehicle)
+        if not len(self.visible_zombie_cars):
             self.ext_zombiecars_info(local_frame = True)
-        self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = False)
+        self.ext_waypoints_info(self.wp_list, self.cur_wp, local_frame = True)
         output_info = self.dic2list(self.info_dict)
-        self.observation = np.array(output_info)
+        self.observation = np.array(output_info, dtype='float32')
+        #print(len(self.observation))
 
         if self.obs_index is None:
             self.obs_index = self.ext_obs_index(self.info_dict)
             #del(self.info_dict['ego_car_world_trans'])
             self.pre_obs_index = self.ext_obs_index(self.info_dict)
 
+    def _get_waypoint_xyz(self):
+        """
+        Get the (x,y) waypoint of current ego position
+            if t != 0 and None, return the wpt of last moment
+            if t == 0 and None wpt: return self.starts
+        """
+        waypoint = self.map.get_waypoint(location=self.vehicle.get_location())
+        if waypoint:
+            return np.array(
+                (waypoint.transform.location.x, waypoint.transform.location.y,
+                 waypoint.transform.rotation.yaw))
+        else:
+            return self.current_wpt
 
-    def ext_egocar_info(self, vehicle, local_frame):
+    def _get_future_wpt_angle(self, distances):
+        """
+        Get next wpts in distances
+        params:
+            distances: list of int/float, the dist of wpt which user wants to get
+        return:
+            future_angles: np.array, <current_wpt, wpt(dist_i)> correspond to the dist in distances
+        """
+        angles = []
+        current_wpt = self.map.get_waypoint(location=self.vehicle.get_location())
+        if not current_wpt:
+            current_road_heading = self.current_wpt[3]
+            wpt_yaw = self.current_wpt[2] % 360
+        else:
+            current_road_heading = current_wpt.transform.rotation.yaw
+            wpt_yaw = current_wpt.transform.rotation.yaw % 360
+        ego_yaw = self.vehicle.get_transform().rotation.yaw % 360
+        delta_yaw = ego_yaw - wpt_yaw
+        if 180 <= delta_yaw and delta_yaw <= 360:
+            delta_yaw -= 360
+        elif -360 <= delta_yaw and delta_yaw <= -180:
+            delta_yaw += 360
+        delta_yaw = np.deg2rad(delta_yaw)
+
+        for d in distances:
+            wpt_heading = current_wpt.next(d)[0].transform.rotation.yaw
+            delta_heading = np.deg2rad(delta_angle_between(current_road_heading,
+                                                wpt_heading))
+            angles.append(delta_heading)
+
+        return angles, delta_yaw, wpt_yaw
+
+    def ext_egocar_info(self, vehicle):
         ego_heading = np.float32(vehicle.get_transform().rotation.yaw / 180.0 * np.pi)
         ego_heading_vec = np.array((np.cos(ego_heading),
                                     np.sin(ego_heading)))
+        future_angles, delta_yaw, wpt_yaw = self._get_future_wpt_angle(
+            distances=self.distance)
+        road_heading = np.array([
+            np.cos(wpt_yaw / 180 * np.pi),
+            np.sin(wpt_yaw / 180 * np.pi)
+        ])
+        self.current_wpt = self._get_waypoint_xyz()
+
         v_world = [vehicle.get_velocity().x, vehicle.get_velocity().y]
+        pos_err_vec = np.array(v_world) - self.current_wpt[0:2]
+        distance_from_center = abs(np.linalg.norm(pos_err_vec) * np.sign(
+            pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
         v_t_absolute = np.array(v_world)
         a_t_absolute = np.array([vehicle.get_acceleration().x, vehicle.get_acceleration().y])
         v_la, v_lon = _vec_decompose(v_t_absolute, ego_heading_vec)
@@ -397,7 +440,10 @@ class FeatureExt():
         self.info_dict['ego_car_pos'] = [vehicle.get_location().x, vehicle.get_location().y]
         self.info_dict['ego_car_vel'] = [v_la, v_lon]
         self.info_dict['ego_car_acc'] = [a_la, a_lon]
-        self.info_dict['ego_car_yaw'] = [ego_heading]
+        self.info_dict['lateral_dist_t'] = [distance_from_center]
+        self.info_dict['state_info'] = future_angles
+        self.info_dict['dyaw_dt'] = [self.vehicle.get_angular_velocity().z]
+        self.info_dict['delta_yaw'] = [delta_yaw]
         #print('box', self.vehicle.bounding_box)
 
     def ext_zombiecars_info(self, local_frame, total_cars=6):
@@ -451,18 +497,12 @@ class FeatureExt():
             return _wp
 
         ego_pos = [self.current_loc.x, self.current_loc.y]
-        self.draw_dic['inner_r'] = inner_line_r
-        self.draw_dic['inner_l'] = inner_line_l
-        self.draw_dic['outer_r'] = outer_line_r
-        self.draw_dis['outer_l'] = outer_line_l
 
         # Transform into vector
         self.info_dict['inner_line_right'] = _to_vector(ego_pos, inner_line_r)
         self.info_dict['inner_line_left'] = _to_vector(ego_pos, inner_line_l)
-        self.info_dict['outer_line_right'] = _to_vector(ego_pos, outer_line_r)
-        self.info_dict['outer_line_left'] = _to_vector(ego_pos, outer_line_l)
-        # print('inner',len(self.info_dict['inner_line_right']))
-        # print('outer',len(self.info_dict['outer_line_right']))
+        #self.info_dict['outer_line_right'] = _to_vector(ego_pos, outer_line_r)
+        #self.info_dict['outer_line_left'] = _to_vector(ego_pos, outer_line_l)
     def a2r(self, angle):
         return angle / 180 * np.pi
 
@@ -576,22 +616,21 @@ class FeatureExt():
 
 class VehicleInfo:
 
-    def __init__(self, vehicle):
+    def __init__(self, vehicle, des_vel=7):
         self.vehicle = vehicle
-        self.target_vel = 12
+        self.target_vel = des_vel
         self.dt = 0.1
 
         self.merge_length = 0
         self.speed_max = 40
         self.acc_max = 10
         self.status = STATUS.FOLLOWING
-        #print("ego car222",vehicle)
 
         wb_vec = vehicle.get_physics_control().wheels[0].position - vehicle.get_physics_control().wheels[2].position
         self.wheelbase = np.sqrt(wb_vec.x ** 2 + wb_vec.y ** 2 + wb_vec.z ** 2) / 100
         self.shape = [self.vehicle.bounding_box.extent.x, self.vehicle.bounding_box.extent.y,
                       self.vehicle.bounding_box.extent.z]
-        self._location = None
+
         self.x = None
         self.y = None
         self.v = None
@@ -599,34 +638,23 @@ class VehicleInfo:
         self.yaw = None
         self.pitch = None
         self.roll = None
-        #self.dir_vec = None
+        self.dir_vec = None
         self.steer = None
         self.update()  # initialize
 
     def update(self):
-        self._location = self.vehicle.get_location()
         self.x = self.vehicle.get_location().x
         self.y = self.vehicle.get_location().y
 
         _v = self.vehicle.get_velocity()
-        ego_velocity = np.array([_v.x, _v.y])
         _acc = self.vehicle.get_acceleration()
-        ego_acc = np.array([_acc.x, _acc.y])
-        self.v = np.linalg.norm(ego_velocity)
-        self.acc = np.linalg.norm(ego_acc)
+        self.v = np.sqrt(_v.x ** 2 + _v.y ** 2)
+        self.acc = np.sqrt(_acc.x ** 2 + _acc.y ** 2)
         self.steer = self.vehicle.get_control().steer
-        # self.dir_vec = self.vehicle.get_physics_control().wheels[0].position - \
-        #                 self.vehicle.get_physics_control().wheels[2].position
-        #self.yaw = math.atan2(self.dir_vec.y, self.dir_vec.x)
-        self.yaw = self.vehicle.get_transform().rotation.yaw
+        self.dir_vec = self.vehicle.get_physics_control().wheels[0].position - \
+                       self.vehicle.get_physics_control().wheels[2].position
+        self.yaw = math.atan2(self.dir_vec.y, self.dir_vec.x)
         self.roll = 0
         self.pitch = 0
 
-        self.merge_length = max(4 * self.v, self.target_vel
-
-
-
-
-
-
-                                )
+        self.merge_length = max(4 * self.v, 12)

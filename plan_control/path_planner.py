@@ -18,7 +18,6 @@ class path_planner():
         self.merge_point = None
         self.target_lane = None
         self.junction_wps = None
-        self.frenet_path = None
 
     def update(self, merge_dist):
 
@@ -31,7 +30,7 @@ class path_planner():
             # print("Current status: Start Left changing")
             left_lane = self.fea_extract.wp_list[0].get_left_lane()
             self.merge_point = self.merge_point_calcu(left_lane, merge_dist)
-            self.target_lane = self.env.map().get_waypoint(self.merge_point)
+            self.target_lane = self.env.world.get_map().get_waypoint(self.merge_point)
             rx, ry, ryaw, s_sum = self.laneChange_path(self.car, self.target_lane, self.merge_point)
             self.car.status = STATUS.LANE_CHANGING_L
             self.fea_extract.point_display(self.merge_point)
@@ -45,7 +44,7 @@ class path_planner():
             # print("Current status: Start Right changing")
             right_lane = self.fea_extract.wp_list[0].get_right_lane()
             self.merge_point = self.merge_point_calcu(right_lane, merge_dist)
-            self.target_lane = self.env.map().get_waypoint(self.merge_point)
+            self.target_lane = self.env.world.get_map().get_waypoint(self.merge_point)
             rx, ry, ryaw, s_sum = self.laneChange_path(self.car, self.target_lane, self.merge_point)
             self.car.status = STATUS.LANE_CHANGING_R
             self.fea_extract.point_display(self.merge_point)
@@ -74,7 +73,7 @@ class path_planner():
             ryaw.append(common.pi_2_pi(cubicspline.calc_yaw(i_s)))
             rk.append(cubicspline.calc_curvature(i_s))
 
-        return rx, ry, ryaw, cubicspline
+        return rx, ry, ryaw, cubicspline.s[-1]
 
     def laneChange_path(self, car, lane_target, merge_point):
         # generate reference line
@@ -116,7 +115,7 @@ class path_planner():
         new_point, nearest_dist, index = None, 1000, 0
         for i in range(len(self.junction_wps)):
             pos = self.junction_wps[i].transform.location
-            _dist = np.hypot(pos.x-self.car.get_location().x, pos.y-self.car.get_location().y)
+            _dist = np.hypot(pos.x-self.car.x, pos.y-self.car.y)
             if _dist < nearest_dist:
                 nearest_dist = _dist
                 new_point = pos

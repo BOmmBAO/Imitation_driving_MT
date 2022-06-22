@@ -314,6 +314,8 @@ class World():
         self.world.set_weather(carla.WeatherParameters.ClearNoon)
         self.map = self.get_map()
         self.actor_list = []
+        self.zombie_cars = []
+        self.visible_zombie_cars = []
         self.fps = 30.0
         self.dt = float(cfg.CARLA.DT)
         self.points_to_draw = {}
@@ -343,9 +345,15 @@ class World():
     # ===============================================================================
     # Vehicle
     # ===============================================================================
-
+class STATUS:
+    FOLLOWING = 0
+    START_LANE_CHANGE_L = 1
+    LANE_CHANGING_L = 2
+    START_LANE_CHANGE_R = 3
+    LANE_CHANGING_R = 4
+    STOPPING = 5
 class Hero_Actor(CarlaActorBase):
-    def __init__(self, world, transform=carla.Transform(),
+    def __init__(self, world, transform, target_velocity,
                  on_collision_fn=None, on_invasion_fn=None, on_los_fn=True):
 
         # Create vehicle actor
@@ -360,9 +368,11 @@ class Hero_Actor(CarlaActorBase):
         super().__init__(world, actor)
 
         # Maintain vehicle control
+        self.dt = world.dt
         self.control = carla.VehicleControl()
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
         self.actors_with_transforms = []
+        self.target_velocity = target_velocity
         self.status = STATUS.FOLLOWING
 
         if callable(on_collision_fn):
@@ -371,6 +381,25 @@ class Hero_Actor(CarlaActorBase):
             self.lane_sensor = LaneInvasionSensor(world, self, on_invasion_fn=on_invasion_fn)
         if on_los_fn:
             self.los_sensor = LineOfSightSensor(actor)
+        self.steer_max = math.pi / 5
+        self.speed_max = 40
+        self.acc_max = 8
+        self.steer_max = np.deg2rad(45.0)
+        self.steer_change_max = np.deg2rad(15.0)  # maximum steering speed [rad/s]
+        wb_vec = actor.get_physics_control().wheels[0].position - actor.get_physics_control().wheels[2].position
+        self.wheelbase = np.sqrt(wb_vec.x ** 2 + wb_vec.y ** 2 + wb_vec.z ** 2) / 100
+        self.merge_length = 0
+        self.shape = [self.actor.bounding_box.extent.x, self.actor.bounding_box.extent.y,
+                      self.actor.bounding_box.extent.z]
+
+        self.x = None
+        self.y = None
+        self.v = None
+        self.acc = None
+        self.yaw = None
+        self.steer = None
+        self.status = STATUS.FOLLOWING
+        self.update()  # initialize
 
     def tick(self):
         self.actor.apply_control(self.control)
@@ -382,40 +411,52 @@ class Hero_Actor(CarlaActorBase):
     def get_closest_waypoint(self):
         return self.world.map.get_waypoint(self.get_transform().location, project_to_road=True)
 
-    def update_global_route_csp(self, global_route_csp):
-        self.global_csp = global_route_csp
-
     def get_collision_history(self):
         return self.collision_hist
 
-    def inertial_to_body_frame(self, xi, yi, psi):
-        Xi = np.array([xi, yi])  # inertial frame
-        R_psi_T = np.array([[np.cos(psi), np.sin(psi)],  # Rotation matrix transpose
-                            [-np.sin(psi), np.cos(psi)]])
-        Xt = np.array([self.actor.get_transform().location.x,  # Translation from inertial to body frame
-                       self.actor.get_transform().location.y])
-        Xb = np.matmul(R_psi_T, Xi - Xt)
-        return Xb
+    def update(self):
+        self.x = self.actor.get_location().x
+        self.y = self.actor.get_location().y
 
-    def body_to_inertial_frame(self, xb, yb, psi):
-        Xb = np.array([xb, yb])  # inertial frame
-        R_psi = np.array([[np.cos(psi), -np.sin(psi)],  # Rotation matrix
-                          [np.sin(psi), np.cos(psi)]])
-        Xt = np.array([self.actor.get_transform().location.x,  # Translation from inertial to body frame
-                       self.actor.get_transform().location.y])
-        Xi = np.matmul(R_psi, Xb) + Xt
-        return Xi
+        _v = self.actor.get_velocity()
+        _acc = self.actor.get_acceleration()
+        self.v = np.sqrt(_v.x ** 2 + _v.y ** 2)
+        self.acc = np.sqrt(_acc.x ** 2 + _acc.y ** 2)
+        self.steer = self.actor.get_control().steer
+        self.merge_length = max(4 * self.v, 12)
 
-    def reset(self):
-        self.los_sensor.reset()
-        self.collision_sensor.reset()
+        wb_vec = self.actor.get_physics_control().wheels[0].position - \
+                 self.actor.get_physics_control().wheels[2].position
+        self.yaw = math.atan2(wb_vec.y, wb_vec.x)
 
-    def decision_tick(self):
-        actors = self.world.get_actors()
-        self.actors_with_transforms = [(actor, actor.get_transform()) for actor in actors]
-        if self.actor is not None:
-            self.hero_transform = self.hero_actor.get_transform()
-        self.world.tick()
+    def predict(self, a, delta):
+        '''Bicycle Model for vehicles'''
+        # delta = self.limit_input_delta(delta)
+        self.x += self.v * math.cos(self.yaw) * self.dt
+        self.y += self.v * math.sin(self.yaw) * self.dt
+        self.yaw += self.v / self.wheelbase * math.tan(delta) * self.dt
+        self.v += a * self.dt
+        # self.v = self.limit_speed(self.v)
+
+    def limit_input_delta(self, delta):
+        if delta >= self.steer_max:
+            return self.steer_max
+
+        if delta <= -self.steer_max:
+            return -self.steer_max
+
+        return delta
+
+    def limit_speed(self, v):
+        if v >= self.speed_max:
+            return self.speed_max
+
+        if v <= -self.speed_max:
+            return -self.speed_max
+
+        return v
+
+
 
 class Util:
 
