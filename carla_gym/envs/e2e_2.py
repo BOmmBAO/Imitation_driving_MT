@@ -49,6 +49,7 @@ class CarlaEnv(gym.Env):
         self.maxAcc = float(cfg.GYM_ENV.MAX_ACC)
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
         self.N_SPAWN_CARS = int(cfg.TRAFFIC_MANAGER.N_SPAWN_CARS)
+        self.actors = []
 
         # RL
         self.sigma_low_v = float(cfg.RL.SIGMAL_LOW_SPEED)
@@ -56,7 +57,7 @@ class CarlaEnv(gym.Env):
         self.sigma_pos = float(cfg.RL.SIGMA_POS)
         self.sigma_angle = float(cfg.RL.SIGMA_ANGLE)
         self._penalty = float(cfg.RL.LANE_CHANGE_PENALTY)
-        self.action_space = gym.spaces.MultiDiscrete([3, 7, 5])
+        self.action_space = gym.spaces.Box(np.array([-2.0, -2.0]), np.array([2.0, 2.0]))
         self.reward = 0.0
 
         # instances
@@ -72,40 +73,45 @@ class CarlaEnv(gym.Env):
             self.world.apply_settings(settings)
 
         self.spawn_transform = self.world.map.get_spawn_points()[5]
+        self.spawn_transform.location += carla.Location(z=1.0)
         self.current_wpt = np.array((self.spawn_transform.location.x, self.spawn_transform.location.y,
                                      self.spawn_transform.rotation.yaw))
 
         self.ego = Hero_Actor(self.world, self.spawn_transform, self.targetSpeed, on_collision_fn=lambda e: self._on_collision(e),
                                    on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
-
+        self.actors.append(self.ego.actor)
+        self.actors.append(self.ego.collision_sensor)
+        self.actors.append(self.ego.lane_sensor)
+        self.actors.append(self.ego.los_sensor)
         self.hud = HUD(self.width, self.height)
         self.hud.set_vehicle(self.ego)
         self.world.on_tick(self.hud.on_world_tick)
 
         # Create cameras
-        width, height = viewer_res
-        self.camera = Camera(self.world, width, height,
+        self.width, self.height = viewer_res
+        self.camera = Camera(self.world, self.width, self.height,
                              transform=camera_transforms["spectator"],
                              attach_to=self.ego, on_recv_image=lambda e: self._set_viewer_image(e),
                              sensor_tick=0.0 if self.synchronous else 1.0 / 30.0)
+        self.actors.append(self.camera)
         self.terminal_state = False
         self.total_steps = 0
 
 
     def reset(self, is_training=True):
-        self.ego.collision_sensor.reset()
+        self.ego.reset()
+        self.ego.control.steer = float(0.0)
+        self.ego.control.throttle = float(0.0)
+        self.ego.tick()
         self.ego.set_transform(self.spawn_transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
-        self.ego.control.steer = float(0.0)
-        self.ego.control.throttle = float(1.0)
-        self.ego.control.brake = float(0.0)
-        self.steer = 0.0
-        self.throttle_or_break = 0.0
+        self.world.tick()
+        self.last_action = [0.0, 0.0]
         yaw = (self.ego.get_transform().rotation.yaw) * np.pi / 180.0
         init_speed = carla.Vector3D(
-            x=8.0 * np.cos(yaw),
-            y=8.0 * np.sin(yaw))
+            x=4.0 * np.cos(yaw),
+            y=4.0 * np.sin(yaw))
         self.ego.set_velocity(init_speed)
         self.ego.tick()
         self.terminal_state = False  # Set to True when we want to end episode
@@ -126,8 +132,8 @@ class CarlaEnv(gym.Env):
         self.speed_accum = 0.0
         #self.laps_completed = 0.0
         self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
-        self.fea_ext.update(0.0, 1.0)
-        self.v_buffer = deque([], maxlen=50)
+        self.fea_ext.update()
+        self.v_buffer = deque([], maxlen=5)
         return self.fea_ext.observation
 
     def _set_viewer_image(self, image):
@@ -144,29 +150,37 @@ class CarlaEnv(gym.Env):
     def step(self, action):
         self.step_count += 1
         self.total_steps += 1
-        max_steer = self.dt / 1.5
-        max_throttle = self.dt / 0.2
-        throttle_or_brake, steer = action[0], action[1]
-        time_throttle = np.clip(throttle_or_brake, -max_throttle, max_throttle)
-        time_steer = np.clip(steer, -max_steer, max_steer)
-        steer = np.clip(time_steer + self.steer, -1.0, 1.0)
-        throttle_or_brake = np.clip(time_throttle + self.throttle_or_break, -1.0, 1.0)
+        # max_steer = self.dt / 1.5
+        # max_throttle = self.dt / 0.2
+        # throttle_or_brake, steer = action[0], action[1]
+        # time_throttle = np.clip(throttle_or_brake, -max_throttle, max_throttle)
+        # time_steer = np.clip(steer, -max_steer, max_steer)
+        # steer = np.clip(time_steer + self.steer, -1.0, 1.0)
+        # throttle_or_brake = np.clip(time_throttle + self.throttle_or_break, -1.0, 1.0)
+        # self.steer = steer
+        # self.throttle_or_break = throttle_or_brake
+        # if throttle_or_brake >= 0:
+        #     throttle = np.clip(throttle_or_brake, 0, 1)
+        #     # brake = 0
+        # else:
+        #     throttle = 0
+            # brake = 1
+        current_action = np.array(action) + self.last_action
+        current_action = np.clip(
+            current_action, -1.0, 1.0, dtype=np.float32)
+        throttle_or_brake, steer = current_action
 
         if throttle_or_brake >= 0:
-            throttle = np.clip(throttle_or_brake, 0, 1)
+            throttle = throttle_or_brake
             brake = 0
         else:
             throttle = 0
-            brake = 1
+            brake = -throttle_or_brake
 
             # Apply control
-        act = carla.VehicleControl(
-            throttle=float(throttle),
-            steer=float(steer),
-            brake=float(brake))
-        self.steer = steer
-        self.throttle_or_break = throttle
-        self.ego.apply_control(act)
+        self.ego.control.steer = float(steer)
+        self.ego.control.throttle = float(throttle)
+        self.ego.control.brake = float(brake)
 
         """
                 **********************************************************************************************************************
@@ -183,8 +197,8 @@ class CarlaEnv(gym.Env):
                 *********************************************** RL Observation ******************************************************
                 *********************************************************************************************************************
         """
-        self.fea_ext.update(steer, throttle)
-
+        self.fea_ext.update()
+        self.last_action = current_action
         # Accumulate speed
         """
                       **********************************************************************************************************************
@@ -203,9 +217,9 @@ class CarlaEnv(gym.Env):
             self.terminal_state = True
             self.logger.debug('too fast')
 
-        elif len(self.v_buffer) == 50:
+        elif len(self.v_buffer) == 5:
             v_norm_mean = np.mean(self.v_buffer)
-            if v_norm_mean < 4:
+            if v_norm_mean < 1.0:
                 self.terminal_state = True
                 self.logger.debug('too low')
                 print('low!')
@@ -239,29 +253,28 @@ class CarlaEnv(gym.Env):
                 pos_err_vec[0] * road_heading[1] - pos_err_vec[1] * road_heading[0]))
             centering_factor = np.exp(-np.power(self.distance_from_center/self.LANE_WIDTH, 2) / 2 / self.sigma_pos / self.sigma_pos)
             angle_factor = np.exp(-np.power(delta_yaw, 2) / 2 / self.sigma_angle / self.sigma_angle)
-            sigma_vel = self.sigma_low_v if last_speed <= self.targetSpeed else self.sigma_high_v
+            sigma_vel = self.sigma_high_v if last_speed <= self.targetSpeed else self.sigma_low_v
             speed_factor = np.exp(-np.power(last_speed - self.targetSpeed, 2) / 2 / sigma_vel / sigma_vel)
-
             self.reward = speed_factor * centering_factor * angle_factor
+            self.test.log({'reward': self.reward})
         else:
             self.reward -= 10
             self.test.log({'traveled': self.distance_traveled, 'epo_reward': self.total_reward,
                            'average_speed': self.speed_accum / self.step_count})
         # Update checkpoint for training
-        if self.step_count >= self.max_time_episode:
+        if self.step_count >= self.lo:
             self.logger.debug('Time out! Episode cost %d steps in route.' % self.step_count)
             self.terminal_state = True
             self.test.log({'traveled': self.distance_traveled, 'epo_reward': self.total_reward,
                            'average_speed': self.speed_accum / self.step_count})
         self.total_reward += self.reward
         self.render()
-        self.test.log({'reward': self.reward})
         return self.fea_ext.observation, self.reward, self.terminal_state, {'reserved': 0}
 
 
     @property
     def observation_space(self) -> spaces.Space:
-        features_space = np.array([np.inf] * 91)  # 17*5 + 6
+        features_space = np.array([np.inf] * 79)  # 17*5 + 6
         #print('shape',features_space.shape)
         # return spaces.Dict(road=self.ROAD_FEATURES['space'], vehicle=self.VEHICLE_FEATURES['space'],
         #                    navigation=self.NAVIGATION_FEATURES['space'])

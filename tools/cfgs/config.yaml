@@ -12,8 +12,8 @@ POLICY:
   NET: MLP                                                      # MLP/CNN/LSTM - DDPG does not have LSTM policy
 
 GYM_ENV:
-  TARGET_SPEED: 12.00 #13.89                                     # Ego's target speed
-  MAX_SPEED: 15.00 #25
+  TARGET_SPEED: 8.00 #13.89                                     # Ego's target speed
+  MAX_SPEED: 16.00 #25
   MAX_ACC: 6.878                                                # equivalent to 24.7608 km/h.s for Tesla model 3
   LOOP_BREAK: 800                                               # max steps each episode
 
@@ -28,3 +28,7 @@ TRAFFIC_MANAGER:
   N_SPAWN_CARS: 0                                              # number of cars spawned at each episode
   MIN_SPEED: 8.33                                               # Min speed for actors in random traffic
   MAX_SPEED: 15.00                                              # Max speed for actors in random traffic
+
+LOCAL_PLANNER:
+  MIN_SPEED: 5.56 # 5.56                                       # Allowed min speed for ego vehicle; RL's -1 action maps to this value
+  MAX_SPEED: 15.28                                              # Allowed max speed for ego vehicle; RL's 1 action maps to this value

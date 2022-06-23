@@ -12,7 +12,44 @@ import numpy as np
 from numpy.linalg import inv
 import math
 
+def euclidean_distance(v1, v2):
+    return math.sqrt(sum([(a - b) ** 2 for a, b in zip(v1, v2)]))
 
+
+def inertial_to_body_frame(ego_location, xi, yi, psi):
+    Xi = np.array([xi, yi])  # inertial frame
+    R_psi_T = np.array([[np.cos(psi), np.sin(psi)],  # Rotation matrix transpose
+                        [-np.sin(psi), np.cos(psi)]])
+    Xt = np.array([ego_location[0],  # Translation from inertial to body frame
+                   ego_location[1]])
+    Xb = np.matmul(R_psi_T, Xi - Xt)
+    return Xb
+
+
+def closest_wp_idx(ego_state, fpath, f_idx):
+    """
+    given the ego_state and frenet_path this function returns the closest WP in front of the vehicle that is within the w_size
+    """
+
+    min_dist = 300  # in meters (Max 100km/h /3.6) * 2 sn
+    ego_location = [ego_state[0], ego_state[1]]
+    closest_wp_index = 0  # default WP
+    w_size = 0
+    if len(fpath.x)-f_idx-2 > 0:
+        for i in range(len(fpath.x)-f_idx-2):
+            temp_wp = [fpath.x[f_idx + i], fpath.y[f_idx + i]]
+            temp_dist = euclidean_distance(ego_location, temp_wp)
+            if temp_dist <= min_dist \
+                    and inertial_to_body_frame(ego_location, temp_wp[0], temp_wp[1], ego_state[2])[0] > 0.0:
+                closest_wp_index = i
+                min_dist = temp_dist
+            w_size += 1
+            if w_size == 10:
+                break
+    else:
+        return len(fpath.t)-2
+
+    return f_idx + closest_wp_index
 # util functions
 def _pos(_object):
     type_obj = str(type(_object))

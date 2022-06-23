@@ -511,6 +511,13 @@ class TRPO(ActorCriticRLModel):
 
                     if self.verbose >= 1 and self.rank == 0:
                         logger.dump_tabular()
+                    # checkpoint for load interrupted model
+
+                    # checkpoint = {
+                    #     'eopch': epoch,
+                    #     'model_state_dict': self.net.state_dict(),
+                    #     'optimizer_state_dict': self.optimizer.state_dict()
+                    # }
 
         if self.using_gail and self.expert_dataset is not None:
             # Exit processes to pickle the dataset

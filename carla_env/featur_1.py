@@ -24,6 +24,8 @@ class FeatureExt():
         self.traffic_light_flag = None
         self.world = world
         self.vehicle = vehicle
+        self.current_wpt = np.array((self.vehicle.get_location().x, self.vehicle.get_location().x,
+                                     self.vehicle.get_transform().rotation.yaw))
         self.vehicle_info = VehicleInfo(vehicle)
         self.map = self.world.get_map()
         self.zombie_cars = world.zombie_cars
@@ -66,7 +68,7 @@ class FeatureExt():
         self.i = 0
 
 
-    def update(self, steer, throttle):
+    def update(self):
         self.vehicle_info.update()
         self.current_loc = self.vehicle.get_location()
         self.current_wpt = self._get_waypoint_xyz()
@@ -77,8 +79,6 @@ class FeatureExt():
         self.is_junction = self.cur_lane.is_junction
         self.waypoints_buffer_update()
         self.cur_wp = self.expon_down_sample()
-        self.steer = steer
-        self.throttle = throttle
         self.obs_update()
 
 
@@ -127,7 +127,7 @@ class FeatureExt():
                 index = i
         self.waypoints_buffer = self.waypoints_buffer[index:]
 
-        if check_lane_change(self.cur_lane, self.waypoints_buffer[index]):
+        if check_lane_change(self.cur_lane, self.waypoints_buffer[-1]):
             _lane = self.map.get_waypoint(self.current_loc)
             self.waypoints_buffer = uniform_wps(_lane, self.wp_ds, count)
 
@@ -386,35 +386,71 @@ class FeatureExt():
         else:
             return self.current_wpt
 
+    def _get_delta_yaw(self):
+        """
+        calculate the delta yaw between ego and current waypoint
+        """
+        current_wpt = self.map.get_waypoint(location=self.vehicle.get_location())
+        if not current_wpt:
+            wpt_yaw = current_road_heading = self.current_wpt[3]%360
+        else:
+            wpt_yaw = current_wpt.transform.rotation.yaw % 360
+        ego_yaw = self.vehicle.get_transform().rotation.yaw % 360
 
+        delta_yaw = ego_yaw - wpt_yaw
+        if 180 <= delta_yaw and delta_yaw <= 360:
+            delta_yaw -= 360
+        elif -360 <= delta_yaw and delta_yaw <= -180:
+            delta_yaw += 360
+        return delta_yaw, wpt_yaw, ego_yaw
+
+    def _get_future_wpt_angle(self):
+        """
+        Get next wpts in distances
+        params:
+            distances: list of int/float, the dist of wpt which user wants to get
+        return:
+            future_angles: np.array, <current_wpt, wpt(dist_i)> correspond to the dist in distances
+        """
+        angles = []
+        current_wpt = self.map.get_waypoint(location=self.vehicle.get_location())
+        if not current_wpt:
+            current_road_heading = self.current_wpt[3]
+        else:
+            current_road_heading = current_wpt.transform.rotation.yaw
+        for d in [0, 4, 9]:
+            wpt_heading = self.waypoints_buffer[d].transform.rotation.yaw
+            delta_heading = delta_angle_between(current_road_heading,
+                                                wpt_heading)
+            angles.append(delta_heading)
+
+        return angles
     def ext_egocar_info(self, vehicle):
-        def vector_norm(vec: carla.Vector3D) -> float:
-            """Returns the norm/magnitude (a scalar) of the given 3D vector."""
-            return math.sqrt(vec.x ** 2 + vec.y ** 2 + vec.z ** 2)
 
-        def speed(actor: carla.Actor) -> float:
-            """Returns the speed of the given actor in km/h."""
-            return 3.6 * vector_norm(actor.get_velocity())
+        self.current_wpt = self._get_waypoint_xyz()
+        delta_yaw, wpt_yaw, ego_yaw = self._get_delta_yaw()
+        ego_heading = np.float32(ego_yaw / 180.0 * np.pi)
+        ego_heading_vec = np.array(
+            [np.cos(ego_heading),
+             np.sin(ego_heading)])
 
-        def dot_product(a: carla.Vector3D, b: carla.Vector3D) -> float:
-            return a.x * b.x + a.y * b.y + a.z * b.z
+        future_angles = self._get_future_wpt_angle()
+        velocity = self.vehicle.get_velocity()
+        accel = self.vehicle.get_acceleration()
+        dyaw_dt = self.vehicle.get_angular_velocity().z
+        v_t_absolute = np.array([velocity.x, velocity.y])
+        a_t_absolute = np.array([accel.x, accel.y])
 
-        def cosine_similarity(a: carla.Vector3D, b: carla.Vector3D) -> float:
-            """-1: opposite vectors (pointing in the opposite direction),
-                0: orthogonal,
-                1: exactly the same (pointing in the same direction)
-            """
-            return dot_product(a, b) / (vector_norm(a) * vector_norm(b))
-        def cosin_similarity(a, b):
-            return  dot_product(a,b) / (vector_norm(a) * vector_norm(b))
-        forward = self.vehicle.get_transform().get_forward_vector()
-        route_forward = self.waypoints_buffer[0].transform.get_forward_vector()
-        sim = cosin_similarity(forward, route_forward)
-        v = speed(self.vehicle) /100.0
+        # decompose v and a to tangential and normal in ego coordinates
+        v_ = _vec_decompose(v_t_absolute, ego_heading_vec)
+        a_ = _vec_decompose(a_t_absolute, ego_heading_vec)
+
+
         self.info_dict['ego_car_pos'] = [0.0, 0.0]#[vehicle.get_location().x, vehicle.get_location().y]
-        self.info_dict['ego_car_vel'] = [v]
-        self.info_dict['ego_car_control'] = [self.steer, self.throttle]
-        self.info_dict['state_info'] = sim
+        self.info_dict['ego_car_vel'] = [v_[0], v_[1], a_[0], a_[1]]
+        self.info_dict['state_info'] = future_angles
+        self.info_dict['dyaw_dt'] = dyaw_dt
+        self.info_dict['dyaw'] = np.deg2rad(delta_yaw)
         #print('box', self.vehicle.bounding_box)
 
     def ext_zombiecars_info(self, local_frame, total_cars=6):
@@ -447,26 +483,7 @@ class FeatureExt():
         self.info_dict['zombie_cars_v'] = vehicles_v
 
     def ext_waypoints_info(self, wp_list, cur_wp, local_frame):
-        def l2_norm(location1: carla.Location, location2: carla.Location) -> float:
-            """Computes the Euclidean distance between two carla.Location objects."""
-            dx = location1.x - location2.x
-            dy = location1.y - location2.y
-            dz = location1.z - location2.z
-            return math.sqrt(dx ** 2 + dy ** 2 + dz ** 2) + np.finfo(np.float32).eps
         # Inner lane line
-        wps = []
-        for i in self.wp_index:
-            wps.append(self.waypoints_buffer[i])
-        distances = []
-        for w in wps:
-            d = l2_norm(self.current_loc, w.transform.location) / len(self.wp_index)
-            distances.append(d)
-
-            # pad the list with last (thus greater) distance if smaller then required
-        if len(distances) < len(self.wp_index):
-            for _ in range(len(self.wp_index) - len(distances)):
-                distances.append(distances[-1])
-
         inner_line_r, inner_line_l = self.find_lane_border(cur_wp)
         # Outer road line
         if not self.is_junction:
@@ -488,8 +505,6 @@ class FeatureExt():
 
         ego_pos = [self.current_loc.x, self.current_loc.y]
 
-        # Transform into vector
-        self.info_dict['distance'] = distances
         self.info_dict['inner_line_right'] = _to_vector(ego_pos, inner_line_r)
         self.info_dict['inner_line_left'] = _to_vector(ego_pos, inner_line_l)
         #print(len(self.info_dict['inner_line_right']))

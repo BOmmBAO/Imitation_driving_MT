@@ -15,9 +15,8 @@ from pathlib import Path
 currentPath = osp.dirname(osp.abspath(inspect.getfile(inspect.currentframe())))
 # sys.path.insert(1, currentPath + '/agents/stable_baselines/')
 import shutil
-#from carla_gym.envs import Carla_decision
+from carla_gym.envs import Carla_decision
 from carla_gym.envs import Carla_e2e
-
 from rl_algorithm.stable_baselines.bench import Monitor
 from rl_algorithm.stable_baselines.common.policies import MlpPolicy as CommonMlpPolicy
 from rl_algorithm.stable_baselines.common.policies import MlpLstmPolicy as CommonMlpLstmPolicy
@@ -51,7 +50,7 @@ def parse_args_cfgs():
         help='Gamma correction of the camera (default: 2.2)')
     parser.add_argument('--cfg_file', type=str, default='tools/cfgs/config.yaml', help='specify the config for training')
     parser.add_argument('--log_interval', help='Log interval (model)', type=int, default=100)
-    parser.add_argument('--agent_id', type=int, default=1)
+    parser.add_argument('--agent_id', type=int, default=2)
     parser.add_argument('--num_timesteps', type=float, default=1e6)
     parser.add_argument('--save_path', help='Path to save trained model to', default=None, type=str)
     parser.add_argument('--log_path', help='Directory to save learning curve data.', default=None, type=str)
@@ -63,7 +62,6 @@ def parse_args_cfgs():
     parser.add_argument('-p', '--carla_port', metavar='P', default=2000, type=int, help='TCP port to listen to (default: 2000)')
     parser.add_argument('--tm_port', default=8000, type=int, help='Traffic Manager TCP port to listen to (default: 8000)')
     parser.add_argument('--carla_res', metavar='WIDTHxHEIGHT', default='1280x720', help='window resolution (default: 1280x720)')
-    parser.add_argument('--step_per_eps', type=float, default=200)
 
 
     args = parser.parse_args()
@@ -90,8 +88,8 @@ if __name__ == '__main__':
     args, cfg = parse_args_cfgs()
     print('Env is starting')
     test = wandb.init(project="MT1", entity="baowenhua", name='e2eTown03')
-    env = Carla_e2e(test, args=args)
-    #env = Carla_decision(test, args=args)
+    #env = Carla_e2e(test, args=args)
+    env = Carla_decision(test, args=args)
 
     # --------------------------------------------------------------------------------------------------------------------
     # --------------------------------------------------Training----------------------------------------------------------

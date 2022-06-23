@@ -368,6 +368,7 @@ class Hero_Actor(CarlaActorBase):
         super().__init__(world, actor)
 
         # Maintain vehicle control
+        self.world = world
         self.dt = world.dt
         self.control = carla.VehicleControl()
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
@@ -400,6 +401,10 @@ class Hero_Actor(CarlaActorBase):
         self.steer = None
         self.status = STATUS.FOLLOWING
         self.update()  # initialize
+    def reset(self):
+        self.collision_sensor.reset()
+        self.lane_sensor.reset()
+        self.los_sensor.reset()
 
     def tick(self):
         self.actor.apply_control(self.control)

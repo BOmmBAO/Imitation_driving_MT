@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 import carla
-from carla_env.feature import STATUS
+from carla_env.featur_1 import STATUS
 
 
 class RuleBased(object):

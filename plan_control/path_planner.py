@@ -9,8 +9,7 @@ from carla_env.rule_decision import STATUS
 
 class path_planner():
 
-    def __init__(self, env, fea_ext):
-        self.env = env
+    def __init__(self, fea_ext):
         self.car = fea_ext.vehicle_info
         self.fea_extract = fea_ext
         self.d_dist = 0.1
@@ -19,7 +18,7 @@ class path_planner():
         self.target_lane = None
         self.junction_wps = None
 
-    def update(self, merge_dist):
+    def update(self, merge_dist=4):
 
         if self.car.status == STATUS.FOLLOWING or self.car.status == STATUS.STOPPING:
             # print("Current status: following")
@@ -73,7 +72,7 @@ class path_planner():
             ryaw.append(common.pi_2_pi(cubicspline.calc_yaw(i_s)))
             rk.append(cubicspline.calc_curvature(i_s))
 
-        return rx, ry, ryaw, cubicspline.s[-1]
+        return rx, ry, ryaw, cubicspline
 
     def laneChange_path(self, car, lane_target, merge_point):
         # generate reference line
@@ -102,7 +101,7 @@ class path_planner():
         if np.hypot(car.x - t_x, car.y - t_y) < 1.5:
             car.status = STATUS.FOLLOWING
 
-        return rx, ry, ryaw, s[-1]
+        return rx, ry, ryaw, cubicspline
 
     def merge_point_calcu(self, lane_target, merge_dist):
         return lane_target.next(merge_dist)[0].transform.location
@@ -140,7 +139,7 @@ class path_planner():
             ryaw.append(common.pi_2_pi(cubicspline.calc_yaw(i_s)))
             rk.append(cubicspline.calc_curvature(i_s))
 
-        return rx, ry, ryaw, stop_dist
+        return rx, ry, ryaw, cubicspline#stop_dist
 
     def extra_wp(self, wp, max_distance=30):
         seq = 1.0
