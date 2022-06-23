@@ -2,7 +2,7 @@ import carla
 import numpy as np
 import time
 client = carla.Client('localhost', 2000)
-client.set_timeout(20.0)
+client.set_timeout(10.0)
 world = client.load_world('Town03')
 _map = world.get_map()
 spawn_transforms = _map.get_spawn_points()
@@ -34,15 +34,18 @@ hero_car_pos = [26.509409, 7.425340, 0.275307]
         #self.hero_car_pos = [-42.350990295410156, -2.835118293762207, 1.8431016206741333]
         # self.hero_car_pos = [-74.38717651367188, 57.531620025634766, 1.805267095565796]  # 13
 wp_location = carla.Location(x=hero_car_pos[0], y=hero_car_pos[1], z=hero_car_pos[2]+10)
-
-world.debug.draw_string(wp_location, 'O', draw_shadow=True,
-                                     color=carla.Color(r=0, g=255, b=0), life_time=50,
-                                     persistent_lines=True)
-#!/usr/bin/env python3
-
-# Copyright (c) 2017 Computer Vision Center (CVC) at the Universitat Autonoma de
-# Barcelona (UAB).
-#
-# This work is licensed under the terms of the MIT license.
-# For a copy, see <https://opensource.org/licenses/MIT>.
-
+global_route = np.empty((0, 3))
+distance = 1
+wps = []
+for i in range(1520):
+    wp = _map.get_waypoint(carla.Location(x=406, y=-100, z=0.1),
+                                                 project_to_road=True).next(distance=distance)[0]
+    distance += 2
+    wps.append(wp)
+    # global_route = np.append(global_route,
+    #                               [[wp.transform.location.x, wp.transform.location.y,
+    #                                 wp.transform.location.z]], axis=0)
+# world.debug.draw_string(wp_location, 'O', draw_shadow=True,
+#                                      color=carla.Color(r=0, g=255, b=0), life_time=50,
+#                                      persistent_lines=True)
+draw_waypoints(wps)

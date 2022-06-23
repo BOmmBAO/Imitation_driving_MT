@@ -345,122 +345,55 @@ class World():
     # ===============================================================================
     # Vehicle
     # ===============================================================================
-class STATUS:
-    FOLLOWING = 0
-    START_LANE_CHANGE_L = 1
-    LANE_CHANGING_L = 2
-    START_LANE_CHANGE_R = 3
-    LANE_CHANGING_R = 4
-    STOPPING = 5
-class Hero_Actor(CarlaActorBase):
-    def __init__(self, world, transform, target_velocity,
-                 on_collision_fn=None, on_invasion_fn=None, on_los_fn=True):
 
-        # Create vehicle actor
+class Hero_Actor(CarlaActorBase):
+    def __init__(self, world,  transform, target_velocity,
+                 on_collision_fn=None, on_invasion_fn=None, on_los_fn=True):
         blueprint = world.get_blueprint_library().filter('vehicle.tesla.model3')[0]
         blueprint.set_attribute('role_name', 'hero')
         if blueprint.has_attribute('color'):
             color = '10,0,0'  # Red
             blueprint.set_attribute('color', color)
-        actor = world.spawn_actor(blueprint, transform)
+        self.transform = transform
+        actor = world.spawn_actor(blueprint, self.transform)
+
         print("Spawned actor \"{}\"".format(actor.type_id))
 
         super().__init__(world, actor)
 
         # Maintain vehicle control
-        self.world = world
+        #self.world = world
         self.dt = world.dt
         self.control = carla.VehicleControl()
         self.LANE_WIDTH = float(cfg.CARLA.LANE_WIDTH)
         self.actors_with_transforms = []
         self.target_velocity = target_velocity
-        self.status = STATUS.FOLLOWING
-
         if callable(on_collision_fn):
             self.collision_sensor = CollisionSensor(world, self, on_collision_fn=on_collision_fn)
         if callable(on_invasion_fn):
             self.lane_sensor = LaneInvasionSensor(world, self, on_invasion_fn=on_invasion_fn)
         if on_los_fn:
             self.los_sensor = LineOfSightSensor(actor)
-        self.steer_max = math.pi / 5
-        self.speed_max = 40
-        self.acc_max = 8
-        self.steer_max = np.deg2rad(45.0)
-        self.steer_change_max = np.deg2rad(15.0)  # maximum steering speed [rad/s]
-        wb_vec = actor.get_physics_control().wheels[0].position - actor.get_physics_control().wheels[2].position
-        self.wheelbase = np.sqrt(wb_vec.x ** 2 + wb_vec.y ** 2 + wb_vec.z ** 2) / 100
-        self.merge_length = 0
-        self.shape = [self.actor.bounding_box.extent.x, self.actor.bounding_box.extent.y,
-                      self.actor.bounding_box.extent.z]
 
-        self.x = None
-        self.y = None
-        self.v = None
-        self.acc = None
-        self.yaw = None
-        self.steer = None
-        self.status = STATUS.FOLLOWING
-        self.update()  # initialize
+
+
     def reset(self):
         self.collision_sensor.reset()
         self.lane_sensor.reset()
         self.los_sensor.reset()
+        self.actor.set_transform(self.transform)
+
+        self.actor.set_autopilot(False)
 
     def tick(self):
         self.actor.apply_control(self.control)
 
-    def get_speed(self):
-        velocity = self.actor.get_velocity()
-        return np.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2)
 
     def get_closest_waypoint(self):
         return self.world.map.get_waypoint(self.get_transform().location, project_to_road=True)
 
     def get_collision_history(self):
         return self.collision_hist
-
-    def update(self):
-        self.x = self.actor.get_location().x
-        self.y = self.actor.get_location().y
-
-        _v = self.actor.get_velocity()
-        _acc = self.actor.get_acceleration()
-        self.v = np.sqrt(_v.x ** 2 + _v.y ** 2)
-        self.acc = np.sqrt(_acc.x ** 2 + _acc.y ** 2)
-        self.steer = self.actor.get_control().steer
-        self.merge_length = max(4 * self.v, 12)
-
-        wb_vec = self.actor.get_physics_control().wheels[0].position - \
-                 self.actor.get_physics_control().wheels[2].position
-        self.yaw = math.atan2(wb_vec.y, wb_vec.x)
-
-    def predict(self, a, delta):
-        '''Bicycle Model for vehicles'''
-        # delta = self.limit_input_delta(delta)
-        self.x += self.v * math.cos(self.yaw) * self.dt
-        self.y += self.v * math.sin(self.yaw) * self.dt
-        self.yaw += self.v / self.wheelbase * math.tan(delta) * self.dt
-        self.v += a * self.dt
-        # self.v = self.limit_speed(self.v)
-
-    def limit_input_delta(self, delta):
-        if delta >= self.steer_max:
-            return self.steer_max
-
-        if delta <= -self.steer_max:
-            return -self.steer_max
-
-        return delta
-
-    def limit_speed(self, v):
-        if v >= self.speed_max:
-            return self.speed_max
-
-        if v <= -self.speed_max:
-            return -self.speed_max
-
-        return v
-
 
 
 class Util:

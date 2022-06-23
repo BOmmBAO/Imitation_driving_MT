@@ -29,7 +29,6 @@ from carla_env.rule_decision import *
 
 class CarConfig():
     def __init__(self, ego):
-        self.motionPlanner = MotionPlanner()
         self.vehicleController = VehiclePIDController(ego, args_lateral={'K_P': 1.5, 'K_D': 0.0, 'K_I': 0.0})
         self.IDM = IntelligentDriverModel(ego)
 class CarlaEnv(gym.Env):
@@ -92,14 +91,22 @@ class CarlaEnv(gym.Env):
             self.world.apply_settings(settings)
 
         # Spawn the ego vehicle at a fixed position between start and dest
-
-        self.spawn_transform = self.world.map.get_spawn_points()[5]
-        self.current_wpt = np.array((self.spawn_transform.location.x, self.spawn_transform.location.y,
-                                     self.spawn_transform.rotation.yaw))
         self.actors_batch = []
+        self.global_path = np.load('road_maps/global_route_town04.npy')
+        self.motionPlanner = MotionPlanner()
+        self.motionPlanner.start(self.global_path)
+        # Create vehicle actor
 
-        self.ego = Hero_Actor(self.world, self.spawn_transform, self.targetSpeed, on_collision_fn=lambda e: self._on_collision(e),
+        x, y, z, yaw = frenet_to_inertial(0, 0, self.motionPlanner.csp)
+        z += 0.1
+
+        self.spawn_point = carla.Transform(location=carla.Location(x=x, y=y, z=z),
+                                           rotation=carla.Rotation(pitch=0.0, yaw=math.degrees(yaw), roll=0.0))
+        self.ego = Hero_Actor(self.world, self.spawn_point, self.targetSpeed,
+                              on_collision_fn=lambda e: self._on_collision(e),
                               on_invasion_fn=lambda e: self._on_invasion(e), on_los_fn=True)
+        self.current_wpt = np.array((self.ego.get_location().x, self.ego.get_location().y,
+                                     self.ego.get_transform().rotation.yaw))
         self.hud = HUD(self.width, self.height)
         self.hud.set_vehicle(self.ego)
         self.world.on_tick(self.hud.on_world_tick)
@@ -115,16 +122,16 @@ class CarlaEnv(gym.Env):
 
         # Start Modules
         # Generate waypoints along the lap
+
         self.ego_config = CarConfig(self.ego)
-        self.csp = None
         self.world.tick()
 
     def reset(self, is_training=True):
         self.ego.reset()
+        self.ego_config.vehicleController.reset()
         self.ego.control.steer = float(0.0)
         self.ego.control.throttle = float(0.0)
         self.ego.tick()
-        self.ego.set_transform(self.spawn_transform)
         self.ego.set_simulate_physics(False)  # Reset the car's physics
         self.ego.set_simulate_physics(True)
         self.world.tick()
@@ -152,11 +159,7 @@ class CarlaEnv(gym.Env):
         self.v_buffer = deque([], maxlen=5)
         self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
         self.fea_ext.update()
-        _, _, _, self.csp = path_planner(self.fea_ext).update()
-        self.ego_config.motionPlanner.start(self.csp)
-        self.ego_config.motionPlanner.reset(0, 0 , df_n=0, Tf=4, Vf_n=0, optimal_path=False)
-
-
+        self.motionPlanner.reset(0, 0 , df_n=0, Tf=4, Vf_n=0, optimal_path=False)
         return self.fea_ext.observation
 
     def _set_viewer_image(self, image):
@@ -171,29 +174,23 @@ class CarlaEnv(gym.Env):
 
 
     def step(self, action):
-        #print(action[0])
         self.step_count += 1
         self.total_steps += 1
         if self.is_first:
-            action = 0
+            action = 1
             self.is_first = False
         """
                 **********************************************************************************************************************
                 *********************************************** Motion Planner *******************************************************
                 **********************************************************************************************************************
         """
-        self.fea_ext = FeatureExt(self.world, self.dt, self.ego)
-        self.fea_ext.update()
-        _, _, _, self.csp = path_planner(self.fea_ext).update()
-        self.ego_config.motionPlanner.start(self.csp)
         temp = [self.ego.get_velocity(), self.ego.get_acceleration()]
         init_speed = speed = get_speed(self.ego)
         acc_vec = self.ego.get_acceleration()
         acc = math.sqrt(acc_vec.x ** 2 + acc_vec.y ** 2 + acc_vec.z ** 2)
         psi = math.radians(self.ego.get_transform().rotation.yaw)
-        ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, 70]
-        self.f_idx = 0
-        fpath, self.lanechange, off_the_road = self.ego_config.motionPlanner.run_step_single_path(ego_state, self.f_idx,
+        ego_state = [self.ego.get_location().x, self.ego.get_location().y, speed, acc, psi, temp, 3000]
+        fpath, self.lanechange, off_the_road = self.motionPlanner.run_step_single_path(ego_state, self.f_idx,
                                                                                        df_n=action, Tf=5,
                                                                                        Vf_n=-1)
         #print(len(fpath.t))
@@ -207,14 +204,15 @@ class CarlaEnv(gym.Env):
                 **********************************************************************************************************************
         """
         # initialize flags
-        collision = track_finished = False
-        # elapsed_time = lambda previous_time: time.time() - previous_time
-        # path_start_time = time.time()
+        track_finished = False
+        elapsed_time = lambda previous_time: time.time() - previous_time
+        path_start_time = time.time()
         ego_init_d, ego_target_d = fpath.d[0], fpath.d[-1]
         # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
         loop_counter = 0
 
-        while self.f_idx < wps_to_go and (loop_counter < 30 or self.lanechange):
+        while self.f_idx < wps_to_go and (elapsed_time(path_start_time) < self.motionPlanner.D_T * 1.5 or
+                                          loop_counter < 30 or self.lanechange):
             loop_counter += 1
             ego_state = [self.ego.get_location().x, self.ego.get_location().y,
                          math.radians(self.ego.get_transform().rotation.yaw), 0, 0, temp, 70]
@@ -224,7 +222,7 @@ class CarlaEnv(gym.Env):
             cmdWP2 = [fpath.x[self.f_idx + 1], fpath.y[self.f_idx + 1]]
 
             # overwrite command speed using IDM
-            #ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
+            ego_s = self.motionPlanner.estimate_frenet_state(ego_state, self.f_idx)[0]  # estimated current ego_s
             ego_d = fpath.d[self.f_idx]
             #vehicle_ahead = self.get_vehicle_ahead(ego_s, ego_d, ego_init_d, ego_target_d)
             cmdSpeed = self.ego_config.IDM.run_step(vd=self.targetSpeed, vehicle_ahead=None)
@@ -240,6 +238,11 @@ class CarlaEnv(gym.Env):
             if any(self.ego.collision_sensor.get_collision_history()):
                 self.terminal_state = True
                 break
+            distance_traveled = ego_s
+            if distance_traveled < -5:
+                distance_traveled = 3000 + distance_traveled
+            if distance_traveled >= 3000:
+                track_finished = True
 
         """
                 *********************************************************************************************************************
@@ -248,7 +251,7 @@ class CarlaEnv(gym.Env):
         """
         self.fea_ext.update()
         # Accumulate speed
-        self.speed_accum += self.ego.get_speed()
+        self.speed_accum += get_speed(self.ego)
         """
                       **********************************************************************************************************************
                       ********************************************* Episode Termination ****************************************************
@@ -313,7 +316,7 @@ class CarlaEnv(gym.Env):
             self.test.log({'traveled': self.distance_traveled, 'epo_reward': self.total_reward,
                            'average_speed': self.speed_accum / self.step_count})
         # Update checkpoint for training
-        if self.step_count >= self.max_time_episode:
+        if track_finished:
             self.logger.debug('Time out! Episode cost %d steps in route.' % self.step_count)
             self.terminal_state = True
             self.test.log({'traveled': self.distance_traveled, 'epo_reward': self.total_reward,

@@ -36,12 +36,12 @@ def frenet_to_inertial(s, d, csp):
     input: frenet s and d variable and the instance of global cubic spline class
     output: x and y in global frame
     """
-    ix, iy = csp.calc_position(s)
+    ix, iy, iz = csp.calc_position(s)
     iyaw = csp.calc_yaw(s)
     x = ix + d * math.cos(iyaw + math.pi / 2.0)
     y = iy + d * math.sin(iyaw + math.pi / 2.0)
 
-    return x, y, iyaw
+    return x, y, iz, iyaw
 
 
 def update_frenet_coordinate(fpath, loc):
@@ -180,7 +180,7 @@ class Frenet_path:
 
         self.x = []
         self.y = []
-        #self.z = []
+        self.z = []
         self.yaw = []
         self.ds = []
         self.c = []
@@ -227,18 +227,18 @@ class FrenetPlanner:
         self.speed_center = (max_speed + min_speed) / 2
         self.speed_radius = (max_speed - min_speed) / 2
 
-    # def update_global_route(self, global_route):
-    #     """
-    #     fit an spline to the updated global route in inertial frame
-    #     """
-    #     wx = []
-    #     wy = []
-    #     wz = []
-    #     for p in global_route:
-    #         wx.append(p[0])
-    #         wy.append(p[1])
-    #         wz.append(p[2])
-    #     self.csp = cubic_spline_planner.Spline3D(wx, wy, wz)
+    def update_global_route(self, global_route):
+        """
+        fit an spline to the updated global route in inertial frame
+        """
+        wx = []
+        wy = []
+        wz = []
+        for p in global_route:
+            wx.append(p[0])
+            wy.append(p[1])
+            wz.append(p[2])
+        self.csp = cubic_spline_planner.Spline3D(wx, wy, wz)
 
     def update_obstacles(self, ob):
         self.ob = ob
@@ -272,7 +272,7 @@ class FrenetPlanner:
         # We calculate normal vector of s line and find error_s based on ego location. Note: This assumes error is small angle
         def update_s(current_s):
             s_yaw = self.csp.calc_yaw(current_s)
-            s_x, s_y= self.csp.calc_position(current_s)
+            s_x, s_y, s_z = self.csp.calc_position(current_s)
             ego_yaw = ego_state[4]
             s_norm = normalize([-np.sin(s_yaw), np.cos(s_yaw)])
             v1 = [ego_state[0] - s_x, ego_state[1] - s_y]
@@ -294,7 +294,7 @@ class FrenetPlanner:
 
         s_yaw = self.csp.calc_yaw(estimated_s)
         s_norm = normalize([-np.sin(s_yaw), np.cos(s_yaw)])
-        s_x, s_y = self.csp.calc_position(estimated_s)
+        s_x, s_y, s_z = self.csp.calc_position(estimated_s)
         v1 = [ego_state[0] - s_x, ego_state[1] - s_y]
         v1_norm = normalize(v1)
         angle = np.arccos(np.clip(np.dot(s_norm, v1_norm),-1.0, 1.0))
@@ -325,7 +325,7 @@ class FrenetPlanner:
 
         return f_state
 
-    def generate_single_frenet_path(self, f_state, df=0, Tf=4, Vf=28.8 / 3.6):
+    def generate_single_frenet_path(self, f_state, df=0, Tf=4, Vf=30 / 3.6):
         """
         generate a single frenet path based on the current and terminal frenet state values
         input: ego's current frenet state and terminal frenet values (lateral displacement, time of arrival, and speed)
@@ -419,15 +419,17 @@ class FrenetPlanner:
 
             # calc global positions
             for i in range(len(fp.s)):
-                ix, iy = self.csp.calc_position(fp.s[i])
+                ix, iy, iz = self.csp.calc_position(fp.s[i])
                 if ix is None:
                     break
                 iyaw = self.csp.calc_yaw(fp.s[i])
                 di = fp.d[i]
                 fx = ix + di * math.cos(iyaw + math.pi / 2.0)
                 fy = iy + di * math.sin(iyaw + math.pi / 2.0)
+                fz = iz
                 fp.x.append(fx)
                 fp.y.append(fy)
+                fp.z.append(fz)
                 fp.yaw.append(iyaw)
 
         return fplist
@@ -470,7 +472,7 @@ class FrenetPlanner:
         if len(ob) == 0:
             return True
         for i in range(len(ob)):
-            d = [euclidean_distance([x, y], ob[i]) for (x, y) in zip(fp.x, fp.y)]
+            d = [euclidean_distance([x, y, z], ob[i]) for (x, y, z) in zip(fp.x, fp.y, fp.z)]
             collision = any([di <= self.ROBOT_RADIUS ** 2 for di in d])
 
             if collision:
@@ -531,7 +533,7 @@ class FrenetPlanner:
 
     def start(self, route):
         self.steps = 0
-        self.csp = route
+        self.update_global_route(route)
 
     def reset(self, s, d, df_n=0, Tf=4, Vf_n=0, optimal_path=True):
         # module_world reset should be executed beforehand to update the initial s and d values
@@ -576,9 +578,9 @@ class FrenetPlanner:
         # estimate frenet state
         f_state = self.estimate_frenet_state(ego_state, idx)
         # convert lateral action value from range (-1, 1) to the desired value in [-3.5, 0.0, 3.0, 7.0]
-        if df_n == 0:
+        if df_n == 0:#< -0.33:
             df = -1
-        elif df_n == 1:
+        elif df_n == 1: # 0.33:
             df = 0
         else:
             df = 1
