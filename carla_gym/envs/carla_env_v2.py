@@ -87,7 +87,7 @@ class CarlaEnv(gym.Env):
         if self.synchronous:
             settings = self.world.get_settings()
             settings.synchronous_mode = True
-            #settings.no_rendering_mode = True
+            settings.no_rendering_mode = True
             settings.fixed_delta_seconds = self.dt
             self.world.apply_settings(settings)
 
@@ -214,7 +214,7 @@ class CarlaEnv(gym.Env):
         # follows path until end of WPs for max 1.5 * path_time or loop counter breaks unless there is a langechange
         loop_counter = 0
 
-        while self.f_idx < wps_to_go and loop_counter < 30:
+        while self.f_idx < wps_to_go and (loop_counter < 30 or self.lanechange):
             loop_counter += 1
             ego_state = [self.ego.get_location().x, self.ego.get_location().y,
                          math.radians(self.ego.get_transform().rotation.yaw), 0, 0, temp, 70]
